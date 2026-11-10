@@ -53,17 +53,23 @@ async function analyze(req, res) {
   const valid = body.frames.every(f => typeof f.time==='number' && typeof f.image==='string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(f.image) && f.image.length < 1200000);
   if (!valid) return respond(res,400,{error:'프레임 데이터가 유효하지 않습니다.'});
   const system = [
-    '당신은 영상을 정지 프레임으로 분석해 AI 영상 생성용 재현 프롬프트를 쓰는 전문가다.',
-    '보이는 사실을 상세하게 기술하되 인물 실명, 카메라 움직임, 오디오, 프레임 사이 동작은 추측하지 마라.',
-    '시각적 연속성과 인물의 옷, 배경, 구도, 조명, 액션의 시간순 변화를 정리하라.',
-    '출력은 반드시 JSON 객체만 작성한다. 필드: title, summary, prompt_ko, prompt_en, negative_prompt, subject, scene, action, camera, lighting, timeline, uncertainties.',
-    'timeline은 [{"time":"00:01","visual":"...","movement":"..."}] 형태의 배열로 작성하라.',
-    'prompt_ko는 한국어, prompt_en은 자연스러운 영어로 구체적이고 독립적으로 재현 가능한 완성 프롬프트여야 한다.',
-    '근거 없는 대사나 소리는 지어내지 마라. 프레임만 있으므로 자세한 소리나 동작이 확인되지 않는다는 점을 uncertainties에 기록하라.',
-    '이 요청은 전체 영상의 일부 구간이다. 이 구간만 독립적으로 생성 가능한 상세 영상 프롬프트를 제공하라.',
-    '프롬프트 첫 부분에 이 구간의 정확한 시작과 끝 시간을 명시하고 인물·의상·배경·눈에 보이는 동작 변화·카메라 구도·조명을 묘사하라.',
-    'timeline은 절대 타임스탬프 순서로 작성하라. 프레임만으로 확인 불가능한 움직임·대사·소리는 사실처럼 쓰지 마라.',
-    '직전 구간의 설명은 시각적 연속성을 위한 참고 정보일 뿐이다. 현재 구간 이미지와 다르면 현재 이미지가 우선이다.'
+    '역할: 참조 영상의 외모가 아닌 행동과 연출을 다른 인물 사진에 이식하기 위한 영상 모션 디렉터 겸 장면 분석가.',
+    '사용자는 재현 영상에 사용할 인물 사진을 이미 보유한다. 절대로 원본 영상 속 인물의 얼굴형, 나이, 성별, 체형, 피부색, 머리 모양, 의상 색상, 액세서리 등 정체성/외형을 옮겨 적지 마라.',
+    '주체는 인물 A, 인물 B처럼 구분하고, 화면 좌측/우측, 카메라와의 상대 위치, 동작 주체, 시선·손·몸의 상호작용 관계만 설명한다.',
+    '각 구간마다 움직임, 동작 순서, 속도, 멈춤/가속/감속, 보폭·팔/손/손가락/손목/고개/어깨/상체/다리 움직임, 자세 변화와 무게중심 이동, 두 인물 사이 거리 및 접촉 타이밍을 면밀히 관찰해 구체적으로 설명한다.',
+    '눈에 보이는 눈썹, 눈꺼풀, 시선 방향, 입 주변 표정, 미소, 놀람, 망설임 등 표정 변화와 상호 반응을 시간에 따라 기술한다. 감정의 내적 이유는 단정하지 않고 시각적 인상으로 표현한다.',
+    '카메라의 구도(전신/허리 위/클로즈업/2인샷 등), 피사체 위치, 샷 크기, 관찰 가능한 앵글/높이, 컷 전환, 관찰 가능한 카메라 움직임, 촬영 시점, 화면 방향과 공간 동선을 기재하라.',
+    '움직임의 실사감과 자연스러움을 재현하도록 관성, 발의 접지와 체중 이동, 호흡에 따른 미세한 몸 움직임, 자연스러운 시선 전환 및 반응의 선후관계, 손이 사물에 닿는 방식, 물리적 일관성을 강조하되 원본에서 관찰 가능한 요소가 우선이다.',
+    '영상의 조명·배경·분위기 설명은 재현해야 할 행동과 공간의 관계를 이해시키는 데 필요한 범위로만 간결하게 기재하라. 원본 인물 외형을 따라 하게 만드는 내용은 넣지 마라.',
+    '각 구간은 독립 사용 가능한 영상 생성 프롬프트로 작성하라. 시작부터 끝까지 어떤 순서로 행동하고 카메라가 무엇을 보여주는지 명확하게 적되, 인물 정체성은 사용자의 참조 사진을 그대로 따른다고 선언하라.',
+    '각 구간에서 인물의 이름 대신 A/B를 사용한다. 서로 접촉하는 경우 누가 먼저 어떤 손으로 어디를 접촉하는지 관찰된 범위 내에서 적고, 불확실하면 불확실하다고 표시하라.',
+    '프레임 사이의 동작, 실제 카메라 이동, 발화, 소리, 짧은 미세 표정은 정지 프레임만으로 확정할 수 없다. 관찰된 사실과 추정은 명시적으로 구분하고 실제 원본 영상 전체를 본 것처럼 말하지 마라.',
+    '출력은 반드시 유효한 JSON 객체. 필드: title, summary, prompt_ko, prompt_en, negative_prompt, subject, scene, action, camera, lighting, timeline, uncertainties.',
+    'subject에는 인물 외형이 아니라 A/B의 화면상 위치, 시작 자세, 상호작용 역할만 담는다. action은 동작 순서·속도·표정/시선 변화·몸의 역학을 구체적으로 쓴다.',
+    'timeline은 [{"time":"00:01","visual":"관찰된 자세·표정·구도","movement":"프레임상 확인되는 변화, 추정은 추정 표시"}] 형태로 시간 순서대로 작성한다.',
+    'prompt_ko는 한국어, prompt_en은 영어로 풍부한 장면 지시문을 작성한다. 시작에는 이 구간의 시간 범위를 명시한다. 두 언어 모두 원본 인물의 외모는 제외하고 참조 사진의 얼굴/의상/정체성을 유지하라는 요구를 담는다.',
+    'negative_prompt에는 얼굴·의상 변형, 신체 왜곡, 부자연스러운 팔다리·손·접촉, 무게중심 오류, 갑작스러운 포즈 점프, 원본에 없는 행동·대사와 불필요한 카메라 전환 방지를 기술한다.',
+    '앞 구간 정보는 동작 연속성 참고용이다. 현재 구간 프레임이 더 우선이며 외모 묘사를 다시 도입하지 않는다.'
   ].join('\n');
   const stamp = sec => {const n=Math.max(0,Math.round(sec));return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')};
   const sectionStart = Number(body.sectionStart ?? 0);
@@ -72,7 +78,7 @@ async function analyze(req, res) {
   const intro = '대상 영상 AI: '+String(body.target||'범용').slice(0,40)+'\n이 구간의 절대 시간: '+stamp(sectionStart)+' ~ '+stamp(sectionEnd)+' ('+Number(body.duration||0).toFixed(1)+'초)\n스타일: '+String(body.style||'원본 재현').slice(0,40)+'\n사용자 추가 요청: '+String(body.notes||'없음').slice(0,1500)+'\n직전 구간 컨텍스트: '+String(body.previousContext||'없음').slice(0,1500)+'\n다음 이미지는 이 구간에서 추출한 스틸 프레임이다. 오직 이 구간에 해당하는 프롬프트를 작성하라.';
   const images = body.frames.flatMap(f => [
     {type:'text',text:'타임스탬프 '+Number(f.time).toFixed(2)+'초'},
-    {type:'image_url',image_url:{url:f.image,detail:'low'}}
+    {type:'image_url',image_url:{url:f.image,detail:'high'}}
   ]);
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(),115000);
@@ -84,7 +90,7 @@ async function analyze(req, res) {
         model:MODEL,
         messages:[{role:'system',content:system},{role:'user',content:[{type:'text',text:intro},...images]}],
         response_format:{type:'json_object'},
-        temperature:0.3,max_tokens:3600
+        temperature:0.2,max_tokens:4500
       })
     });
     const json = await upstream.json().catch(()=>({}));
