@@ -80,7 +80,24 @@ async function analyze(req, res) {
       })
     });
     const json = await upstream.json().catch(()=>({}));
-    if (!upstream.ok) return respond(res,502,{error:'AI 서비스 요청이 실패했습니다 ('+upstream.status+'). API 키나 사용 한도를 확인해 주세요.'});
+    if (!upstream.ok) {
+      const e = json && typeof json.error === 'object' ? json.error : {};
+      const code = String(e.code || e.type || '').slice(0,80);
+      console.warn('OpenAI API error status=%s code=%s type=%s', upstream.status, String(e.code || '').slice(0,80), String(e.type || '').slice(0,80));
+      let problem = 'AI 요청이 실패했습니다 (' + upstream.status + '). Render 서버 설정을 확인해 주세요.';
+      if (upstream.status === 429) {
+        const quota = /insufficient_quota|credit_balance_exhausted|spend_limit_exceeded|usage_limit_exceeded/i.test(code+' '+String(e.type||''));
+        if (quota) problem = 'API 크레딧 또는 사용·지출 한도가 부족합니다 (429). OpenAI Platform → Billing에서 잔액과 한도를 확인해 주세요. ChatGPT Plus와 API 결제는 별개입니다.';
+        else problem = 'API 요청 속도·토큰 한도를 초과했습니다 (429). 잠시 후 다시 시도하고 OpenAI Platform → Limits에서 한도를 확인해 주세요.';
+      } else if (upstream.status === 401) {
+        problem = 'OpenAI API 키 인증에 실패했습니다 (401). Render의 OPENAI_API_KEY를 확인해 주세요.';
+      } else if (upstream.status === 403) {
+        problem = 'OpenAI API 접근 권한이 없습니다 (403). 프로젝트·모델 사용 권한을 확인해 주세요.';
+      } else if (upstream.status === 400) {
+        problem = 'AI 요청 설정 오류 (400). 모델과 분석 프레임 설정을 확인해 주세요.';
+      }
+      return respond(res,upstream.status===429?429:502,{error:problem,code});
+    }
     const content = json.choices?.[0]?.message?.content;
     if (!content) return respond(res,502,{error:'AI 분석 응답이 비어 있습니다.'});
     let result;
