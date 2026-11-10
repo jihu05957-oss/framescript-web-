@@ -100,9 +100,11 @@ async function analyze(req, res) {
       console.warn('OpenAI API error status=%s code=%s type=%s', upstream.status, String(e.code || '').slice(0,80), String(e.type || '').slice(0,80));
       let problem = 'AI 요청이 실패했습니다 (' + upstream.status + '). Render 서버 설정을 확인해 주세요.';
       if (upstream.status === 429) {
+        const billingInactive = /billing_not_active/i.test(code+' '+String(e.type||''));
         const quota = /insufficient_quota|credit_balance_exhausted|spend_limit_exceeded|usage_limit_exceeded/i.test(code+' '+String(e.type||''));
-        if (quota) problem = 'API 크레딧 또는 사용·지출 한도가 부족합니다 (429). OpenAI Platform → Billing에서 잔액과 한도를 확인해 주세요. ChatGPT Plus와 API 결제는 별개입니다.';
-        else problem = 'API 요청 속도·토큰 한도를 초과했습니다 (429). 잠시 후 다시 시도하고 OpenAI Platform → Limits에서 한도를 확인해 주세요.';
+        if (billingInactive) problem = 'API 결제 미활성화 (429 / billing_not_active). 사이트에 설정된 API 키가 속한 OpenAI 조직·프로젝트의 결제 상태를 확인하세요. 충전한 조직에서 새 프로젝트 키를 발급해 Render의 OPENAI_API_KEY를 교체할 수 있습니다. 현재 잔액이 있다면 추가 충전하지 마세요.';
+        else if (quota) problem = 'API 크레딧 또는 사용·지출 한도가 부족합니다 (429). OpenAI Platform → Billing에서 잔액과 한도를 확인해 주세요. ChatGPT Plus와 API 결제는 별개입니다.';
+        else problem = 'API 요청 속도·토큰 한도를 초과했습니다 (429). OpenAI Platform → Limits에서 요청·토큰 한도를 확인해 주세요.';
       } else if (upstream.status === 401) {
         problem = 'OpenAI API 키 인증에 실패했습니다 (401). Render의 OPENAI_API_KEY를 확인해 주세요.';
       } else if (upstream.status === 403) {
