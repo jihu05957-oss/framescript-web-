@@ -59,9 +59,17 @@ async function analyze(req, res) {
     '출력은 반드시 JSON 객체만 작성한다. 필드: title, summary, prompt_ko, prompt_en, negative_prompt, subject, scene, action, camera, lighting, timeline, uncertainties.',
     'timeline은 [{"time":"00:01","visual":"...","movement":"..."}] 형태의 배열로 작성하라.',
     'prompt_ko는 한국어, prompt_en은 자연스러운 영어로 구체적이고 독립적으로 재현 가능한 완성 프롬프트여야 한다.',
-    '근거 없는 대사나 소리는 지어내지 마라. 프레임만 있으므로 자세한 소리나 동작이 확인되지 않는다는 점을 uncertainties에 기록하라.'
+    '근거 없는 대사나 소리는 지어내지 마라. 프레임만 있으므로 자세한 소리나 동작이 확인되지 않는다는 점을 uncertainties에 기록하라.',
+    '이 요청은 전체 영상의 일부 구간이다. 이 구간만 독립적으로 생성 가능한 상세 영상 프롬프트를 제공하라.',
+    '프롬프트 첫 부분에 이 구간의 정확한 시작과 끝 시간을 명시하고 인물·의상·배경·눈에 보이는 동작 변화·카메라 구도·조명을 묘사하라.',
+    'timeline은 절대 타임스탬프 순서로 작성하라. 프레임만으로 확인 불가능한 움직임·대사·소리는 사실처럼 쓰지 마라.',
+    '직전 구간의 설명은 시각적 연속성을 위한 참고 정보일 뿐이다. 현재 구간 이미지와 다르면 현재 이미지가 우선이다.'
   ].join('\n');
-  const intro = '대상 영상 AI: '+String(body.target||'범용').slice(0,40)+'\n영상 길이: '+Number(body.duration||0).toFixed(1)+'초\n스타일: '+String(body.style||'원본 재현').slice(0,40)+'\n사용자 추가 요청: '+String(body.notes||'없음').slice(0,1500)+'\n다음 이미지는 시간 순서대로 추출한 스틸 프레임이다.';
+  const stamp = sec => {const n=Math.max(0,Math.round(sec));return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')};
+  const sectionStart = Number(body.sectionStart ?? 0);
+  const sectionEnd = Number(body.sectionEnd ?? body.duration ?? 0);
+  if (!Number.isFinite(sectionStart) || !Number.isFinite(sectionEnd) || sectionStart < 0 || sectionEnd <= sectionStart) return respond(res,400,{error:'분석 구간이 잘못 지정됐습니다.'});
+  const intro = '대상 영상 AI: '+String(body.target||'범용').slice(0,40)+'\n이 구간의 절대 시간: '+stamp(sectionStart)+' ~ '+stamp(sectionEnd)+' ('+Number(body.duration||0).toFixed(1)+'초)\n스타일: '+String(body.style||'원본 재현').slice(0,40)+'\n사용자 추가 요청: '+String(body.notes||'없음').slice(0,1500)+'\n직전 구간 컨텍스트: '+String(body.previousContext||'없음').slice(0,1500)+'\n다음 이미지는 이 구간에서 추출한 스틸 프레임이다. 오직 이 구간에 해당하는 프롬프트를 작성하라.';
   const images = body.frames.flatMap(f => [
     {type:'text',text:'타임스탬프 '+Number(f.time).toFixed(2)+'초'},
     {type:'image_url',image_url:{url:f.image,detail:'low'}}
@@ -76,7 +84,7 @@ async function analyze(req, res) {
         model:MODEL,
         messages:[{role:'system',content:system},{role:'user',content:[{type:'text',text:intro},...images]}],
         response_format:{type:'json_object'},
-        temperature:0.3,max_tokens:2400
+        temperature:0.3,max_tokens:3600
       })
     });
     const json = await upstream.json().catch(()=>({}));
