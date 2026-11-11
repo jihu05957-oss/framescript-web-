@@ -66,7 +66,7 @@ async function analyze(req, res) {
     '프레임 사이의 동작, 실제 카메라 이동, 발화, 소리, 짧은 미세 표정은 정지 프레임만으로 확정할 수 없다. 관찰된 사실과 추정은 명시적으로 구분하고 실제 원본 영상 전체를 본 것처럼 말하지 마라.',
     '출력은 반드시 유효한 JSON 객체. 필드: title, summary, prompt_ko, prompt_en, negative_prompt, subject, scene, action, camera, lighting, timeline, uncertainties.',
     'subject에는 인물 외형이 아니라 A/B의 화면상 위치, 시작 자세, 상호작용 역할만 담는다. action은 동작 순서·속도·표정/시선 변화·몸의 역학을 구체적으로 쓴다.',
-    'timeline은 [{"time":"00:01","visual":"관찰된 자세·표정·구도","movement":"프레임상 확인되는 변화, 추정은 추정 표시"}] 형태로 시간 순서대로 작성한다.',
+    'timeline은 [{"time":"00:01","visual":"관찰된 자세·표정·구도","movement":"프레임상 확인되는 변화, 추정은 추정 표시"}] 형태로 시간 순서대로 최대 12개 작성한다. JSON이 출력 한도 내에서 반드시 닫히게 요약과 설명의 불필요한 반복을 줄인다.',
     'prompt_ko는 한국어, prompt_en은 영어로 풍부한 장면 지시문을 작성한다. 시작에는 이 구간의 시간 범위를 명시한다. 두 언어 모두 원본 인물의 외모는 제외하고 참조 사진의 얼굴/의상/정체성을 유지하라는 요구를 담는다.',
     'negative_prompt에는 얼굴·의상 변형, 신체 왜곡, 부자연스러운 팔다리·손·접촉, 무게중심 오류, 갑작스러운 포즈 점프, 원본에 없는 행동·대사와 불필요한 카메라 전환 방지를 기술한다.',
     '앞 구간 정보는 동작 연속성 참고용이다. 현재 구간 프레임이 더 우선이며 외모 묘사를 다시 도입하지 않는다.'
@@ -80,20 +80,22 @@ async function analyze(req, res) {
     {type:'text',text:'타임스탬프 '+Number(f.time).toFixed(2)+'초'},
     {type:'image_url',image_url:{url:f.image,detail:'high'}}
   ]);
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(),115000);
-  try {
-    const upstream = await fetch('https://api.openai.com/v1/chat/completions',{
-      method:'POST',signal:controller.signal,
-      headers:{'Authorization':'Bearer '+process.env.OPENAI_API_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:MODEL,
-        messages:[{role:'system',content:system},{role:'user',content:[{type:'text',text:intro},...images]}],
-        response_format:{type:'json_object'},
-        temperature:0.2,max_tokens:4500
-      })
-    });
-    const json = await upstream.json().catch(()=>({}));
+  const requestMessages = [{role:'system',content:system},{role:'user',content:[{type:'text',text:intro},...images]}];
+  for(let attempt=0;attempt<2;attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(),115000);
+    let upstream, json;
+    try {
+      const messages = attempt===0 ? requestMessages : [...requestMessages,{
+        role:'user',content:'앞선 응답이 비었거나 JSON이 불완전했습니다. 이 구간을 실제 프레임에 근거하여 다시 분석하세요. 반드시 완결된 유효한 JSON 객체만 출력하세요. 필수 11개 필드를 모두 포함하고, timeline은 최대 12개 항목으로 간결하게 작성하세요. 특히 prompt_ko와 prompt_en의 행동·표정·카메라 묘사는 충실히 유지하고 같은 내용을 불필요하게 반복하지 마세요.'
+      }];
+      upstream=await fetch('https://api.openai.com/v1/chat/completions',{
+        method:'POST',signal:controller.signal,
+        headers:{'Authorization':'Bearer '+process.env.OPENAI_API_KEY,'Content-Type':'application/json'},
+        body:JSON.stringify({model:MODEL,messages,response_format:{type:'json_object'},temperature:0.2,max_tokens:attempt===0?4500:5500})
+      });
+      json=await upstream.json().catch(()=>({}));
+    } finally { clearTimeout(timer); }
     if (!upstream.ok) {
       const e = json && typeof json.error === 'object' ? json.error : {};
       const code = String(e.code || e.type || '').slice(0,80);
@@ -114,13 +116,34 @@ async function analyze(req, res) {
       }
       return respond(res,upstream.status===429?429:502,{error:problem,code});
     }
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) return respond(res,502,{error:'AI 분석 응답이 비어 있습니다.'});
+    const choice = json.choices?.[0] || {};
+    const finish = String(choice.finish_reason || 'unknown');
+    const refusal = Boolean(choice.message?.refusal);
+    const content = choice.message?.content;
+    if(refusal || finish === 'content_filter') {
+      console.warn('OpenAI completion filtered finish=%s refusal=%s attempt=%s',finish,refusal,attempt+1);
+      return respond(res,422,{error:'이 구간의 AI 분석이 콘텐츠 필터에 의해 제한됐습니다. 결제나 토큰 한도 문제가 아닙니다. 해당 구간의 원본 내용을 확인하거나 다른 구간을 분석해 주세요.',code:'content_filtered'});
+    }
+    if(typeof content!=='string' || !content.trim()) {
+      console.warn('OpenAI completion empty finish=%s attempt=%s output_tokens=%s choices=%s',finish,attempt+1,json.usage?.completion_tokens??'unknown',json.choices?.length??0);
+      if(attempt===0)continue;
+      return respond(res,502,{error:'AI가 빈 응답을 두 번 반환했습니다 (종료 이유: '+finish+'). 다시 요청해도 반복된다면 이 구간의 장면이 콘텐츠 필터에 걸리는지 확인하거나 구간 길이를 줄여 주세요.',code:'empty_completion',finish_reason:finish});
+    }
     let result;
-    try { result = JSON.parse(content); }
-    catch {return respond(res,502,{error:'AI 분석 결과를 읽지 못했습니다. 다시 시도해 주세요.'});}
+    try { result=JSON.parse(content); }
+    catch {
+      console.warn('OpenAI completion invalid JSON finish=%s attempt=%s output_tokens=%s',finish,attempt+1,json.usage?.completion_tokens??'unknown');
+      if(attempt===0)continue;
+      return respond(res,502,{error:finish==='length'?'AI 출력 토큰 길이 제한으로 JSON을 완성하지 못했습니다. 구간 길이나 프레임 수를 줄여 주세요.':'AI 분석 응답의 JSON 형식을 두 번 확인했지만 올바르지 않았습니다. 다시 시도해 주세요.',code:'invalid_json',finish_reason:finish});
+    }
+    if(!result || typeof result!=='object' || !String(result.prompt_ko||'').trim()) {
+      console.warn('OpenAI completion missing prompt finish=%s attempt=%s',finish,attempt+1);
+      if(attempt===0)continue;
+      return respond(res,502,{error:'AI가 필수 한국어 프롬프트를 생성하지 않았습니다. 다른 구간을 시도해 주세요.',code:'missing_prompt'});
+    }
     return respond(res,200,{result:normalizeResult(result),model:MODEL});
-  } finally {clearTimeout(timer);}
+  }
+  return respond(res,502,{error:'AI 응답이 완성되지 않았습니다. 해당 구간을 다시 분석해 주세요.',code:'incomplete_result'});
 }
 const server = http.createServer(async (req,res)=>{
   try {
