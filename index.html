@@ -12,14 +12,14 @@
 <div class="cols"><div><label class="lbl" for="model">생성 모델</label><select id="model"><option>범용</option><option>Wan 3.0</option><option>Wan 2.7</option><option>Kling</option><option>Sora</option><option>Runway</option><option>Veo</option></select></div><div><label class="lbl" for="style">스타일</label><select id="style"><option>원본 재현</option><option>시네마틱</option><option>창의적</option></select></div></div>
 <div class="cols"><div><label class="lbl" for="count">프레임 수</label><select id="count"><option value="6">6장 · 빠르게</option><option value="10">10장 · 기본</option><option value="12" selected>12장 · 표정·동작 자세히</option></select></div><div><label class="lbl" for="from">시작 초</label><input id="from" type="number" step=".1" min="0" value="0"></div></div>
 <label class="lbl" for="segment">프롬프트 구간 나누기</label><select id="segment"><option value="30" selected>30초마다 자동 분리</option><option value="15">15초마다 자동 분리 (세밀한 동작 추천)</option><option value="60">60초마다 자동 분리</option><option value="all">영상 전체 한 구간</option></select><p class="segment-hint" id="plan">영상 업로드 시 필요한 구간 수를 안내합니다.</p><label class="lbl" for="to">끝 초</label><input id="to" type="number" step=".1" min="0" placeholder="영상 전체"></input><label class="lbl" for="notes">추가 행동·연출 설명 (선택)</label><textarea id="notes" placeholder="예: A가 오른손을 들자 B가 고개를 돌려 바라본다. 동작 타이밍과 시선, 손의 움직임을 우선 분석해줘."></textarea><p class="help">원본 인물의 얼굴·체형·의상은 분석 대상이 아닙니다. 생성 AI에서 보유한 인물 사진을 참조 이미지로 사용하세요.</p>
-<div id="passwordWrap" hidden><label class="lbl" for="password">AI 사용 비밀번호</label><input id="password" type="password" autocomplete="off"></div><button id="start" class="btn" disabled>✦ 영상 분석하고 프롬프트 만들기</button><div id="status" class="status">영상을 선택해 주세요.</div>
+<div id="passwordWrap" hidden><label class="lbl" for="password">AI 사용 비밀번호</label><input id="password" type="password" autocomplete="off"></div><button id="start" class="btn" disabled>✦ 영상 분석하고 프롬프트 만들기</button><p class="help">중간에 실패해도 완료된 구간은 보존됩니다. 설정을 그대로 두고 ‘중단 지점부터 이어서 분석’을 누르면 이전 구간을 다시 분석하지 않습니다. 빈 AI 응답은 최대 1회 자동 재요청되어 추가 API 비용이 발생할 수 있습니다.</p><div id="status" class="status">영상을 선택해 주세요.</div>
 </section><section class="panel"><h2>03. 추출 장면</h2><p class="help">프레임을 보고 실제 장면을 확인할 수 있어요.</p><div id="frames"></div><h2 style="margin-top:23px">04. 행동 재현 프롬프트</h2><div id="resultSelectWrap" class="result-select" hidden><label for="resultSelect">분석 결과 구간 선택</label><select id="resultSelect" aria-label="결과 구간 선택"></select><div id="completion" class="segment-hint"></div></div><div id="summary" class="resultinfo">동작·표정 변화·카메라·상호작용을 분석한 결과가 여기에 표시됩니다.</div><div class="tabs"><button class="ghost active" data-tab="ko">한국어</button><button class="ghost" data-tab="en">English</button><button class="ghost" data-tab="neg">네거티브</button></div><textarea id="output" class="output" placeholder="생성된 프롬프트를 직접 수정할 수 있습니다."></textarea><div class="row"><button id="copy" class="ghost">📋 현재 구간 복사</button><button id="download" class="ghost">↓ 현재 구간 TXT</button></div><div class="all-actions" id="allActions" hidden><button id="copyAll" class="ghost">📋 전체 구간 한 번에 복사</button><button id="downloadAll" class="ghost">↓ 전체 구간 TXT 저장</button></div></section></div><footer>FrameScript © 2026 · 영상 원본은 브라우저에서 처리되며, AI를 선택할 때는 추출 프레임이 AI 서비스에 전송됩니다.</footer></main>
 <script>
 
 const $=id=>document.getElementById(id);
 const file=$('file'),video=$('preview'),status=$('status');
 const fields={ko:'prompt_ko',en:'prompt_en',neg:'negative_prompt'};
-let videoUrl=null,chosen=null,available=false,protect=false,results=[],selectedIndex=0,tab='ko',busy=false;
+let videoUrl=null,chosen=null,available=false,protect=false,results=[],selectedIndex=0,tab='ko',busy=false,resumeState=null;
 const MAX_SECTIONS=24;
 function message(s,err=false){status.textContent=s;status.classList.toggle('error',err)}
 function clock(s){const n=Math.max(0,Math.round(s));return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')}
@@ -54,6 +54,7 @@ async function health(){
 health();
 file.onchange=()=>{
  chosen=file.files&&file.files[0];if(!chosen)return;
+ resumeState=null;$('start').textContent='✦ 영상 분석하고 프롬프트 만들기';
  if(videoUrl)URL.revokeObjectURL(videoUrl);
  videoUrl=URL.createObjectURL(chosen);video.src=videoUrl;video.hidden=false;
  $('start').disabled=true;results=[];$('frames').replaceChildren();$('resultSelectWrap').hidden=true;$('allActions').hidden=true;
@@ -161,15 +162,23 @@ async function ai(frames,range,previousContext){
 $('start').onclick=async()=>{
  if(busy||!chosen)return;
  busy=true;$('start').disabled=true;
- let part=0,total=0;
+ let part=0,total=0,signature='';
  try{
   const range=getRange(),sections=makeSections(range.start,range.end),mode=$('engine').value,useAI=mode==='ai'||mode==='auto'&&available;
   if(useAI&&!available)throw Error('정밀 AI가 아직 연결되지 않았습니다. API 키와 APP_PASSWORD 설정을 확인해 주세요.');
   total=sections.length;
-  results=[];selectedIndex=0;tab='ko';$('output').value='';$('frames').replaceChildren();
-  $('resultSelectWrap').hidden=true;$('allActions').hidden=true;$('summary').textContent='구간별 분석을 진행합니다.';
-  document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='ko'));
-  for(let i=0;i<sections.length;i++){
+  signature=JSON.stringify([chosen.name,chosen.size,chosen.lastModified,range.start,range.end,$('segment').value,$('count').value,mode,$('model').value,$('style').value,$('notes').value]);
+  const resume=Boolean(resumeState&&resumeState.file===chosen&&resumeState.signature===signature&&results.length>0&&results.length<total);
+  if(!resume){
+   results=[];selectedIndex=0;tab='ko';$('output').value='';$('frames').replaceChildren();
+   $('resultSelectWrap').hidden=true;$('allActions').hidden=true;$('summary').textContent='구간별 분석을 진행합니다.';
+   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='ko'));
+  }else{
+   persistEditor();
+   while($('frames').children.length>results.length)$('frames').lastElementChild.remove();
+   message('완료된 '+results.length+'개 구간을 유지하고 '+(results.length+1)+'번째부터 이어서 분석합니다.');
+  }
+  for(let i=resume?results.length:0;i<sections.length;i++){
    const section=sections[i],label=labelOf(section);part=i+1;
    message('['+part+'/'+total+'] '+label+' · 프레임 추출 중');
    const frames=await extract(chosen,section.start,section.end,Number($('count').value),'['+part+'/'+total+'] '+label);
@@ -185,9 +194,16 @@ $('start').onclick=async()=>{
    refreshResults(total);
    message('['+part+'/'+total+'] '+label+' · 완료');
   }
+  resumeState=null;$('start').textContent='✦ 영상 분석하고 프롬프트 만들기';
   message('총 '+total+'개 구간 '+(useAI?'정밀 AI':'무료 기본')+' 프롬프트 생성 완료!');
  }catch(e){
-  message('['+part+'/'+total+'] 분석 중단: '+e.message+(results.length?' · 완료된 '+results.length+'개 구간은 아래에서 확인할 수 있습니다.':''),true);
+  if(results.length>0&&results.length<total&&signature){
+   resumeState={file:chosen,signature};
+   $('start').textContent='▶ '+(results.length+1)+'/'+total+' 구간부터 이어서 분석';
+  }else{
+   resumeState=null;$('start').textContent='✦ 영상 분석하고 프롬프트 만들기';
+  }
+  message('['+part+'/'+total+'] 분석 중단: '+e.message+(results.length?' · 완료된 '+results.length+'개 구간은 아래에서 확인할 수 있습니다. 다시 누르면 '+(results.length+1)+'번째부터 이어집니다.':''),true);
  }finally{busy=false;$('start').disabled=!chosen}
 };
 $('resultSelect').onchange=e=>{persistEditor();display(Number(e.target.value))};
