@@ -98,4 +98,4 @@ app.delete('/api/gallery/:id',guard,wrap(async(req,res)=>{let n=state.items.find
 app.get('/api/health',(req,res)=>res.json({ok:true,ready,persistent}));
 app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));
 app.use((e,req,res,next)=>{console.error(e);res.status(e.code==='LIMIT_FILE_SIZE'?413:500).json({error:e.code==='LIMIT_FILE_SIZE'?'40MB 이하 파일만 업로드할 수 있어요':safe(e.message,150)})});
-load().then(()=>{app.listen(process.env.PORT||10000,'0.0.0.0',()=>console.log('Archive ready; R2 '+persistent));setInterval(()=>{if(ready&&!busy)scan()},12*3600000).unref()});
+load().then(()=>{app.listen(process.env.PORT||10000,'0.0.0.0',()=>console.log('Archive ready; R2 '+persistent));wikiPage(new Date().getFullYear(),'').then(j=>console.log('Wikimedia API check OK; files:',(j.query?.pages||[]).length)).catch(e=>console.warn('Wikimedia API check failed:',e.message));setInterval(()=>{if(ready&&!busy)scan()},12*3600000).unref()});
