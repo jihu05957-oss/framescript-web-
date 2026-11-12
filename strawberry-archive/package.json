@@ -1,0 +1,16 @@
+{
+  "name": "strawberry-moon-archive",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "@aws-sdk/client-s3": "^3.930.0"
+  }
+}
