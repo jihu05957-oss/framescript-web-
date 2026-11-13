@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {ARCHIVE_FREE_CAP_BYTES,usedBytes,hasRoom,formatStorageStatus,isExactDuplicate,archiveCompletion}=require('./archive-core');
+const {ARCHIVE_FREE_CAP_BYTES,usedBytes,hasRoom,formatStorageStatus,isExactDuplicate,archiveCompletion,trustedSourceUrl,scanYearCategories}=require('./archive-core');
 test('free cap leaves reserve under 10 GB',()=>assert.ok(ARCHIVE_FREE_CAP_BYTES<10_000_000_000));
 test('empty archive starts with all allowance',()=>assert.equal(formatStorageStatus([]).remainingBytes,ARCHIVE_FREE_CAP_BYTES));
 test('counts bytes across all saved files',()=>assert.equal(usedBytes([{size:2},{size:3}]),5));
@@ -14,3 +14,8 @@ test('storage saturation blocks completion',()=>assert.equal(archiveCompletion({
 test('unresolved files block completion',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:2,storageFull:false,connected:true}),'incomplete_errors'));
 test('unfinished categories block completion',()=>assert.equal(archiveCompletion({pendingCategories:1,unresolved:0,storageFull:false,connected:true}),'collecting'));
 test('only source scan can be called done',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:0,storageFull:false,connected:true}),'source_scan_complete'));
+
+test('all years include 2008 and current year',()=>{const xs=scanYearCategories(2026);assert.equal(xs.length,19);assert.equal(xs[0].year,2026);assert.equal(xs[xs.length-1].year,2008)});
+test('source URL rejects javascript and non-HTTPS protocols',()=>{assert.equal(trustedSourceUrl('javascript:alert(1)'),'');assert.equal(trustedSourceUrl('http://example.com/'),'');assert.equal(trustedSourceUrl('data:text/html,a'),'')});
+test('source URL rejects embedded username/password',()=>assert.equal(trustedSourceUrl('https://secret:pass@example.com/'),''));
+test('HTTPS source URL is retained safely',()=>assert.equal(trustedSourceUrl('https://commons.wikimedia.org/wiki/File:Example'),'https://commons.wikimedia.org/wiki/File:Example'));
