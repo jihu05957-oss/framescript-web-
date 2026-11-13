@@ -19,9 +19,9 @@ function around(game,history,id){
 }
 function statusRank(s){
  const v=String(s||'').toLowerCase();
- if(/\b(out|injured|suspended|inactive|ruled out|결장|부상 결장)\b/.test(v))return '결장';
- if(/\b(doubtful|questionable|gtd|day.to.day|game.time decision|불확실|출전 미정)\b/.test(v))return '출전 불확실';
- if(/\b(probable|available|active|출전 가능)\b/.test(v))return '출전 가능 예상';
+ if(/\b(out|injured|suspended|inactive|ruled out)\b|결장|출전 정지/.test(v))return '결장';
+ if(/\b(doubtful|questionable|gtd|day.to.day|game.time decision)\b|불확실|출전 미정/.test(v))return '출전 불확실';
+ if(/\b(probable|available|active)\b|출전 가능/.test(v))return '출전 가능 예상';
  return '상태 미확인';
 }
 function impact(injuries,leaders){
@@ -66,7 +66,7 @@ function build(game,history,extra={},strength=null,issues=[]){
  const add=(id,title,level,body,items=[])=>sections.push({id,title,level,body,items});
  const timelineText=t=>(t.rest.last?'직전 경기 '+String(t.rest.last.date).slice(0,10)+' · '+(t.rest.last.opponent||'상대 미확인')+' · 경기 간격 '+hoursText(t.rest.restHours):'직전 경기 일정 확인되지 않음')+
   ' / '+(t.rest.next?'다음 경기 '+String(t.rest.next.date).slice(0,10)+' · '+(t.rest.next.opponent||'상대 미확인')+' · 경기 간격 '+hoursText(t.rest.nextHours):'이후 경기 일정 확인되지 않음');
- add('schedule','일정·회복·로테이션','verified',
+ add('schedule','일정·회복·로테이션',[home,away].some(t=>t.rest.last||t.rest.next)?'verified':'unknown',
   '확보된 경기 일정으로 휴식 간격과 다음 경기까지 남은 시간을 계산했습니다. 경기의 중요도나 감독의 로테이션 의도를 일정만으로 단정하지 않습니다.',
   [home.name+': '+timelineText(home),away.name+': '+timelineText(away)]);
  for(const team of [home,away]){
@@ -104,6 +104,7 @@ function build(game,history,extra={},strength=null,issues=[]){
  if(game.sourceType==='espn')references.push({label:'일정·팀·부상 조회',provider:'ESPN 공개 데이터',url:'https://www.espn.com/'});
  if(strength?.sourceUrl)references.push({label:'국가대표 역사 기록',provider:'CC0 A매치',url:strength.sourceUrl});
  for(const n of headlines)if(/^https:\/\/[^ ]+/.test(n.url||''))references.push({label:n.title,provider:n.source||'ESPN',url:n.url});
+ for(const check of extra.sourceChecks||[])if(!check.ok)missing.push('소스 응답 미확인: '+String(check.label||'기타 데이터'));
  for(const a of issues||[])missing.push('데이터 수집 오류: '+String(a).slice(0,130));
  const checked=sections.filter(s=>s.level!=='unknown').length;
  return {version:'2.0',generatedAt:new Date().toISOString(),
