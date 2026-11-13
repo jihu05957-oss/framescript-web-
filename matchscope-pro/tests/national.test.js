@@ -20,7 +20,7 @@ test('Historical Elo corrects Japan-Brazil and Saudi Arabia-South Korea home bia
  const d=parseResults(csv());
  for(const [home,away] of [['Japan','Brazil'],['Saudi Arabia','South Korea']]){
   const g=game(home,away),n=matchFacts(g,d);
-  assert.equal(n.history.length,32,'Only pre-fixture matches must be included');
+  assert.equal(n.history.length,16,'Only pre-fixture matches for the selected teams must be included');
   assert.ok(n.strength.homeGames>=8&&n.strength.awayGames>=8);
   assert.ok(n.strength.awayRating>n.strength.homeRating);
   const m=model(g,n.history,{strength:n.strength});
