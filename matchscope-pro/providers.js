@@ -221,7 +221,12 @@ async function detail(g){
  const extra=results[1].status==='fulfilled'?results[1].value:emptyExtra();
  const match=results[2].status==='fulfilled'?results[2].value:null;
  const raw=results[0].status==='fulfilled'?results[0].value:[];
- const history=match&&match.history.length?match.history:raw;
+ // Preserve the CC0 history and append verified ESPN matches after that dataset's last date,
+ // along with any upcoming matches; no double-counting old historical fixtures.
+ const history=match&&match.history.length?[
+  ...match.history,
+  ...raw.filter(e=>e.date&&(!match.strength.sourceLastMatch||e.date.slice(0,10)>match.strength.sourceLastMatch))
+ ]:raw;
  const errors=results.filter(r=>r.status==='rejected').map(r=>String(r.reason?.message||r.reason||'자료 수집 실패').slice(0,200));
  if(match?.strength){
   const s=match.strength;
