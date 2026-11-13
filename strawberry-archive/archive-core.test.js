@@ -1,0 +1,16 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {ARCHIVE_FREE_CAP_BYTES,usedBytes,hasRoom,formatStorageStatus,isExactDuplicate,archiveCompletion}=require('./archive-core');
+test('free cap leaves reserve under 10 GB',()=>assert.ok(ARCHIVE_FREE_CAP_BYTES<10_000_000_000));
+test('empty archive starts with all allowance',()=>assert.equal(formatStorageStatus([]).remainingBytes,ARCHIVE_FREE_CAP_BYTES));
+test('counts bytes across all saved files',()=>assert.equal(usedBytes([{size:2},{size:3}]),5));
+test('does not exceed storage cap',()=>assert.equal(hasRoom([{size:80}],21,100),false));
+test('may exactly fill cap',()=>assert.equal(hasRoom([{size:80}],20,100),true));
+test('rejects negative file size',()=>assert.equal(hasRoom([],-1),false));
+test('duplicate SHA excludes repeated same file',()=>assert.equal(isExactDuplicate([{sha:'abc'}],'abc'),true));
+test('different SHA is not claimed duplicate',()=>assert.equal(isExactDuplicate([{sha:'abc'}],'def'),false));
+test('zero-source scan is not complete when unconfigured',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:0,storageFull:false,connected:false}),'storage_unconfigured'));
+test('storage saturation blocks completion',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:0,storageFull:true,connected:true}),'storage_full'));
+test('unresolved files block completion',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:2,storageFull:false,connected:true}),'incomplete_errors'));
+test('unfinished categories block completion',()=>assert.equal(archiveCompletion({pendingCategories:1,unresolved:0,storageFull:false,connected:true}),'collecting'));
+test('only source scan can be called done',()=>assert.equal(archiveCompletion({pendingCategories:0,unresolved:0,storageFull:false,connected:true}),'source_scan_complete'));
