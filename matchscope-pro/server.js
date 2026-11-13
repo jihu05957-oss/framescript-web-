@@ -2,6 +2,7 @@
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
 const {LEAGUES}=require('./leagues'),{listDay,findGame,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
 const national=require('./national');
+const pipeline=require('./pipeline');
 const PORT=process.env.PORT||3000,ROOT=path.resolve(__dirname,'public');
 function send(res,status,payload){res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','access-control-allow-origin':'same-origin'});res.end(JSON.stringify(payload));}
 function validDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))return false;const d=new Date(day+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===day&&Number(day.slice(0,4))>=2020&&Number(day.slice(0,4))<=2035;}
@@ -28,6 +29,17 @@ async function handler(req,res){
  if(req.method!=='GET')return send(res,405,{error:'GET만 허용됩니다.'});
  if(route==='/api/health')return send(res,200,{ok:true,app:'MatchScope Pro',time:new Date().toISOString(),providers:[...SOURCE_HEALTH.values()],national:national.health()});
  if(route==='/api/leagues')return send(res,200,{leagues:LEAGUES});
+ if(route==='/api/batch/status'){
+  const date=url.searchParams.get('date');
+  if(!validDate(date))return send(res,400,{error:'날짜 형식 오류'});
+  return send(res,200,pipeline.status(date));
+ }
+ if(route==='/api/batch/start'){
+  const date=url.searchParams.get('date');
+  if(!validDate(date))return send(res,400,{error:'날짜 형식 오류'});
+  try{return send(res,200,await pipeline.start(date));}
+  catch(error){return send(res,429,{error:String(error.message||error).slice(0,240)})}
+ }
  if(route==='/api/games'||route==='/api/analysis'){
  const date=url.searchParams.get('date');
  if(!validDate(date))return send(res,400,{error:'YYYY-MM-DD 형식의 유효한 날짜를 입력하세요.'});
@@ -39,6 +51,7 @@ async function handler(req,res){
  }
  const id=url.searchParams.get('id');
  if(!id||id.length>120)return send(res,400,{error:'경기 ID를 확인하세요.'});
+ if(!demo)return send(res,200,await pipeline.researchOne(date,id));
  const started=Date.now();
  const game=demo?demoGames(date).find(g=>g.id===id):await findGame(date,id);
  if(!game)return send(res,404,{error:'선택한 날짜에서 해당 경기를 찾지 못했습니다. 다시 검색해 주세요.'});
