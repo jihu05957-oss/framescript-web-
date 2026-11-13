@@ -1,6 +1,6 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
-const {LEAGUES}=require('./leagues'),{listDay,detail,SOURCE_HEALTH}=require('./providers'),{model}=require('./model');
+const {LEAGUES}=require('./leagues'),{listDay,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
 const PORT=process.env.PORT||3000,ROOT=path.resolve(__dirname,'public');
 function send(res,status,payload){res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','access-control-allow-origin':'same-origin'});res.end(JSON.stringify(payload));}
 function validDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))return false;const d=new Date(day+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===day&&Number(day.slice(0,4))>=2020&&Number(day.slice(0,4))<=2035;}
@@ -55,5 +55,15 @@ async function handler(req,res){
  res.writeHead(200,{'content-type':mime[path.extname(full)]||'application/octet-stream','x-content-type-options':'nosniff','cache-control':path.extname(full)==='.html'?'no-cache':'public,max-age=3600'});res.end(data);});
 }
 const server=http.createServer((req,res)=>Promise.resolve(handler(req,res)).catch(e=>{if(!res.headersSent)send(res,500,{error:'예상하지 못한 서버 오류'});}));
-if(require.main===module)server.listen(PORT,'0.0.0.0',()=>console.log('MatchScope Pro listening on '+PORT));
+if(require.main===module)server.listen(PORT,'0.0.0.0',()=>{
+ console.log('MatchScope Pro listening on '+PORT);
+ const checks=[
+  ['ESPN','https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=20261113&limit=10'],
+  ['TheSportsDB','https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=2026-11-13&l=4328']
+ ];
+ Promise.allSettled(checks.map(async ([name,url])=>{
+  try{const data=await getJson(url,60000);console.log('External provider check:',name,'connected',Array.isArray(data.events)?data.events.length:'n/a');}
+  catch(error){console.warn('External provider check:',name,'unavailable:',String(error.message||error));}
+ }));
+});
 module.exports={server,handler,validDate};
