@@ -1,6 +1,7 @@
 'use strict';
 const {LEAGUES,leagueById,espnPath}=require('./leagues');
 const {day:kblOfficialDay,recent:kblOfficialRecent}=require('./kbl');
+const national=require('./national');
 const ESPN='https://site.api.espn.com/apis/site/v2/sports';
 const TSDB='https://www.thesportsdb.com/api/v1/json/123';
 const CACHE=new Map(),SOURCE_HEALTH=new Map(),GAME_INDEX=new Map();
@@ -134,9 +135,26 @@ async function espnSupplement(g,l){
 }
 async function detail(g){
  const l=leagueById(g.league);if(!l)throw Error('리그를 찾지 못했습니다.');
- const promises=[g.sourceType==='kbl'?kblOfficialRecent(g):g.sourceType==='espn'&&l.espn?espnRecent(g,l):tsdbRecent(g,l),g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]})];
+ const international=l.id.startsWith('intl-');
+ const emptyExtra=()=>({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]});
+ const promises=[
+  g.sourceType==='kbl'?kblOfficialRecent(g):g.sourceType==='espn'&&l.espn?espnRecent(g,l):tsdbRecent(g,l),
+  g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve(emptyExtra()),
+  international?national.load().then(dataset=>national.matchFacts(g,dataset)):Promise.resolve(null)
+ ];
  const results=await Promise.allSettled(promises);
- return {history:results[0].status==='fulfilled'?results[0].value:[],extra:results[1].status==='fulfilled'?results[1].value:{injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]},
- errors:results.filter(r=>r.status==='rejected').map(r=>r.reason?.message||'데이터 조회 실패')};
+ const extra=results[1].status==='fulfilled'?results[1].value:emptyExtra();
+ const match=results[2].status==='fulfilled'?results[2].value:null;
+ const raw=results[0].status==='fulfilled'?results[0].value:[];
+ const history=match&&match.history.length?match.history:raw;
+ const errors=results.filter(r=>r.status==='rejected').map(r=>String(r.reason?.message||r.reason||'자료 수집 실패').slice(0,200));
+ if(match?.strength){
+  const s=match.strength;
+  extra.available.push('국가대표 Elo(자체 계산) '+g.home.name+' '+(s.homeRating??'미확인')+', '+g.away.name+' '+(s.awayRating??'미확인'));
+  extra.available.push('국가대표 완료 경기 기록 '+s.homeGames+' / '+s.awayGames+'경기 (최근 24개월)');
+  extra.available.push('A매치 원본 자료 마지막 경기 '+s.sourceLastMatch);
+ }
+ return {history,extra,errors,strength:match?.strength||null};
 }
+
 module.exports={LEAGUES,listDay,findGame,detail,getJson,SOURCE_HEALTH,normalizeESPN,normalizeTSDB,kst};
