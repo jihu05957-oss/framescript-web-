@@ -1,6 +1,6 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
-const {LEAGUES}=require('./leagues'),{listDay,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
+const {LEAGUES}=require('./leagues'),{listDay,findGame,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
 const PORT=process.env.PORT||3000,ROOT=path.resolve(__dirname,'public');
 function send(res,status,payload){res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','access-control-allow-origin':'same-origin'});res.end(JSON.stringify(payload));}
 function validDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))return false;const d=new Date(day+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===day&&Number(day.slice(0,4))>=2020&&Number(day.slice(0,4))<=2035;}
@@ -38,11 +38,24 @@ async function handler(req,res){
  }
  const id=url.searchParams.get('id');
  if(!id||id.length>120)return send(res,400,{error:'경기 ID를 확인하세요.'});
- const scheduled=demo?{games:demoGames(date)}:await listDay(date);
- const game=scheduled.games.find(g=>g.id===id);
+ const started=Date.now();
+ const game=demo?demoGames(date).find(g=>g.id===id):await findGame(date,id);
  if(!game)return send(res,404,{error:'선택한 날짜에서 해당 경기를 찾지 못했습니다. 다시 검색해 주세요.'});
- const facts=demo?{history:demoHistory(game),extra:{injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]},errors:[]}:await detail(game);
- return send(res,200,{game,history:facts.history,extra:facts.extra,errors:facts.errors,prediction:model(game,facts.history),generatedAt:new Date().toISOString(),
+ const emptyExtra=()=>({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]});
+ let facts;
+ if(demo){facts={history:demoHistory(game),extra:emptyExtra(),errors:[]};}
+ else{
+  let timer;
+  try{
+   facts=await Promise.race([
+    detail(game),
+    new Promise(resolve=>{timer=setTimeout(()=>resolve({history:[],extra:emptyExtra(),errors:['상세 데이터 조회 제한시간 9초 초과: 확인된 경기 정보와 리그 기본 통계로 제한 분석합니다.']}),9000);})
+   ]);
+  }finally{if(timer)clearTimeout(timer);}
+ }
+ const prediction=model(game,facts.history);
+ console.info('Match analysis',JSON.stringify({league:game.league,source:game.sourceType,ms:Date.now()-started,history:facts.history.length,issues:facts.errors.length}));
+ return send(res,200,{game,history:facts.history,extra:facts.extra,errors:facts.errors,prediction,generatedAt:new Date().toISOString(),analysisMode:facts.errors.length?'limited':'standard',
  limitations:['공개 자료로 확인되지 않은 부상·선발·배당 등은 제공되지 않습니다.','통계 예측은 경기 결과나 수익을 보장하지 않습니다.','리그별 무료 소스 데이터가 누락될 수 있습니다.']});
  }catch(e){console.error(route,e?.message);return send(res,502,{error:'공개 경기 데이터를 가져오지 못했습니다.',detail:String(e?.message||e).slice(0,250)});}
  }
