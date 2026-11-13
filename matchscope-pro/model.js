@@ -36,15 +36,20 @@ function distribution(mh,ma,sport,sd){
  }
  const sum=arr.reduce((s,x)=>s+x.p,0);return arr.map(x=>({...x,p:x.p/sum}));
 }
-function model(game,history=[]){
+function model(game,history=[],context={}){
  const sport=game.sport,base=BASE[sport];if(!base)throw Error('지원되지 않는 종목');
  const h=form(history,game.home.id,game.date),a=form(history,game.away.id,game.date);
- const required=game.sport==='soccer'&&String(game.league||'').startsWith('intl-')?4:3;
- const covered=h.count>=required&&a.count>=required;
+ const international=game.sport==='soccer'&&String(game.league||'').startsWith('intl-');
+ const required=international?4:3;
+ const strength=context?.strength;
+ const hasElo=!!(strength&&Number.isFinite(strength.homeRating)&&Number.isFinite(strength.awayRating)
+  &&strength.allTimeHomeGames>=8&&strength.allTimeAwayGames>=8);
+ const covered=h.count>=required&&a.count>=required&&(!international||hasElo);
  if(!covered){
-  const why='양 팀 각각 최근 완료 경기 '+required+'건 이상이 필요하지만 현재 확보한 기록은 홈 '+h.count+'건, 원정 '+a.count+'건입니다.';
+  const why='양 팀 각각 최근 완료 경기 '+required+'건 이상 필요 · 확보한 기록: 홈 '+h.count+'건, 원정 '+a.count+'건.'
+   +(international&&!hasElo?' 국가대표 상대 전력 지표가 확인되지 않았습니다.':'');
   return {
-   sport,league:game.league,gameId:game.id,home:h,away:a,available:false,
+   sport,league:game.league,gameId:game.id,home:h,away:a,strength:hasElo?strength:null,available:false,
    expected:{home:null,away:null,total:null},
    probabilities:{home:null,draw:null,away:null,btts:null},
    lines:[],topScores:[],rank:[],choices:[],defaultLine:null,confidence:'분석 보류',
@@ -53,7 +58,7 @@ function model(game,history=[]){
    explanation:[why,'자료가 부족한 상태에서 리그 평균과 홈 이점만으로 승자를 예측하면 일본–브라질 등 전력 차이가 있는 경기에서 근거 없이 홈팀이 유리해지는 오류가 발생합니다.',
     '현재는 신뢰할 수 있는 양 팀의 실전 전적이 확보되지 않아 승무패·예상 득점·언더오버 수치 공개를 보류합니다.',
     '부상·선발·상대 전력 차이·국가대표팀 랭킹을 검증 가능한 자료로 확인한 뒤 반영해야 합니다.'],
-   isFinished:game.status==='final',modelVersion:'1.1.0'
+   isFinished:game.status==='final',modelVersion:'1.2.0'
   };
  }
  const prior=PRIOR[game.league]||[base.home,base.away],neutral=(prior[0]+prior[1])/2;
@@ -62,8 +67,13 @@ function model(game,history=[]){
  const hDef=neutral*(1-hw)+(h.conceded??neutral)*hw;
  const aOff=neutral*(1-aw)+(a.scored??neutral)*aw;
  const aDef=neutral*(1-aw)+(a.conceded??neutral)*aw;
- const expH=clamp(prior[0]*(hOff+aDef)/(2*neutral),prior[0]*.5,prior[0]*1.7);
- const expA=clamp(prior[1]*(aOff+hDef)/(2*neutral),prior[1]*.5,prior[1]*1.7);
+ let expH=clamp(prior[0]*(hOff+aDef)/(2*neutral),prior[0]*.5,prior[0]*1.7);
+ let expA=clamp(prior[1]*(aOff+hDef)/(2*neutral),prior[1]*.5,prior[1]*1.7);
+ if(international&&hasElo){
+  // Home designation is not evidence of home venue; apply no extra venue boost.
+  const ratingDifference=clamp((strength.homeRating-strength.awayRating)/650,-0.55,0.55);
+  expH*=Math.exp(ratingDifference);expA*=Math.exp(-ratingDifference);
+ }
  const dist=distribution(expH,expA,sport,base.sd);
  let home=0,draw=0,away=0,btts=0;
  for(const x of dist){if(x.h>x.a)home+=x.p;else if(x.h<x.a)away+=x.p;else draw+=x.p;
@@ -79,14 +89,15 @@ function model(game,history=[]){
   game.home.name+' 최근 '+h.count+'경기 '+h.w+'승 '+h.d+'무 '+h.l+'패, 평균 득점 '+(h.scored??0).toFixed(1)+' / 실점 '+(h.conceded??0).toFixed(1)+'입니다.',
   game.away.name+' 최근 '+a.count+'경기 '+a.w+'승 '+a.d+'무 '+a.l+'패, 평균 득점 '+(a.scored??0).toFixed(1)+' / 실점 '+(a.conceded??0).toFixed(1)+'입니다.'
  ]:['최근 전적을 확보하지 못해 리그 평균 득점과 기본 홈 어드밴티지에 따른 추정치입니다.'];
+ if(international&&hasElo)explanation.push('최근 공개 A매치 결과로 계산한 자체 Elo 지표: '+game.home.name+' '+strength.homeRating+'점, '+game.away.name+' '+strength.awayRating+'점입니다. 이는 공식 FIFA 랭킹이 아니며 실력을 완벽하게 나타내지 않습니다.');
  explanation.push('추정 기대 득점은 홈 '+expH.toFixed(2)+', 원정 '+expA.toFixed(2)+'입니다. '+(sport==='basketball'?'정규분포 근사':'포아송 분포')+'로 점수 분포를 계산했습니다.');
  explanation.push('가장 높은 모델 확률은 '+choices[0].label+' '+(choices[0].prob*100).toFixed(1)+'%입니다. 수익을 보장하거나 특정 베팅을 권유하는 수치는 아닙니다.');
  if(sport!=='soccer')explanation.push('동점 확률은 승패 양쪽에 절반씩 배분했으며 실제 연장전/무승부 규정은 별도로 반영하지 않았습니다.');
  explanation.push('현재 예측은 양 팀 최근 실제 결과의 득·실점만 반영한 간이 모델입니다. 상대 팀 전력 수준·FIFA/클럽 Elo·부상·선발 등은 검증된 데이터 없이는 반영하지 않으므로 예측 확률을 확정적인 실력 비교로 해석하면 안 됩니다.');
- return {sport,league:game.league,gameId:game.id,home:h,away:a,available:true,expected:{home:expH,away:expA,total:expH+expA},
+ return {sport,league:game.league,gameId:game.id,home:h,away:a,strength:hasElo?strength:null,available:true,expected:{home:expH,away:expA,total:expH+expA},
  probabilities:{home,draw:sport==='soccer'?draw:null,away,btts:sport==='soccer'?btts:null},
  lines,topScores:dist.sort((x,y)=>y.p-x.p).slice(0,5),rank,choices,defaultLine,confidence,
- dataQuality:{usedCompletedGames:sample,homeGames:h.count,awayGames:a.count,level:confidence,source:'실제 최근 경기 기반 수축평균 + 확률분포',note:sample===0?'최근 경기 자료 없음: 리그 사전 평균으로만 추정':sample<12?'경기 표본이 적어 불확실성이 큽니다.':'선발·부상 등 변수는 미반영'},
- explanation,isFinished:game.status==='final',modelVersion:'1.1.0'};
+ dataQuality:{usedCompletedGames:sample,homeGames:h.count,awayGames:a.count,level:confidence,source:'실제 최근 경기 기반 수축평균 + 확률분포',note:international?'최근 24개월 A매치 기록과 자체 Elo를 결합한 검증 전 추정치 · 데이터 마지막 경기 '+(strength.sourceLastMatch||'미확인'):sample<12?'경기 표본이 적어 불확실성이 큽니다.':'선발·부상·상대 전력 등 변수는 미반영'},
+ explanation,isFinished:game.status==='final',modelVersion:'1.2.0'};
 }
 module.exports={BASE,model,poisson,form};
