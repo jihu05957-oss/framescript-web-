@@ -1,5 +1,6 @@
 'use strict';
 const {LEAGUES,leagueById,espnPath}=require('./leagues');
+const {day:kblOfficialDay,recent:kblOfficialRecent}=require('./kbl');
 const ESPN='https://site.api.espn.com/apis/site/v2/sports';
 const TSDB='https://www.thesportsdb.com/api/v1/json/123';
 const CACHE=new Map(),SOURCE_HEALTH=new Map();
@@ -58,6 +59,15 @@ function unique(games){const map=new Map();
  if(!map.has(key)||g.sourceType==='espn')map.set(key,g);}
  return [...map.values()];}
 async function oneDay(l,date){
+ if(l.id==='kbl'){
+  let official={ok:false,games:[]},fallback={ok:false,games:[]},error=null;
+  try{official=await kblOfficialDay(date)}catch(e){error=String(e.message||e).slice(0,120)}
+  if(!official.games.length)try{fallback=await tsdbSchedule(l,date)}catch(e){}
+  const games=unique([...official.games,...fallback.games]);
+  const status={id:l.id,league:l.name,count:games.length,official:official.ok,tsdb:fallback.ok,status:official.ok||fallback.ok?'ok':'unavailable',coverage:'미보장',error};
+  SOURCE_HEALTH.set(l.id,{...status,checkedAt:new Date().toISOString()});return {games,status};
+ }
+
  let a={games:[],ok:false},b={games:[],ok:false};
  try{a=await espnSchedule(l,date);}catch(e){}
  if(!a.games.length)try{b=await tsdbSchedule(l,date);}catch(e){}
@@ -99,7 +109,7 @@ async function espnSupplement(g,l){
 }
 async function detail(g){
  const l=leagueById(g.league);if(!l)throw Error('리그를 찾지 못했습니다.');
- const promises=[g.sourceType==='espn'&&l.espn?espnRecent(g,l):tsdbRecent(g,l),g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]})];
+ const promises=[g.sourceType==='kbl'?kblOfficialRecent(g):g.sourceType==='espn'&&l.espn?espnRecent(g,l):tsdbRecent(g,l),g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]})];
  const results=await Promise.allSettled(promises);
  return {history:results[0].status==='fulfilled'?results[0].value:[],extra:results[1].status==='fulfilled'?results[1].value:{injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]},
  errors:results.filter(r=>r.status==='rejected').map(r=>r.reason?.message||'데이터 조회 실패')};
