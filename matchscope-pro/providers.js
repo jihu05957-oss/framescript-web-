@@ -122,22 +122,84 @@ async function tsdbRecent(g,l){
  for(const r of responses)if(r.status==='fulfilled')for(const e of r.value.results||[]){const v=normalizeTSDB(e,l);if(v)all.push(v);}
  return [...new Map(all.map(x=>[x.externalId,x])).values()];
 }
+function readableStatus(s){
+ if(typeof s==='string')return s;
+ if(!s||typeof s!=='object')return '';
+ return s.description||s.displayName||s.name||s.abbreviation||s.type?.description||'';
+}
+function parseInjuryRows(data,team,url){
+ const rows=Array.isArray(data?.injuries)?data.injuries:Array.isArray(data?.items)?data.items:[];
+ const output=[];
+ for(const entry of rows){
+  const athlete=entry.athlete||entry.player||entry;
+  const name=athlete.displayName||athlete.fullName||entry.name;
+  if(!name)continue;
+  const sub=Array.isArray(entry.injuries)?entry.injuries:[entry];
+  for(const item of sub.slice(0,3)){
+   const text=[readableStatus(item.status),readableStatus(item.type),readableStatus(item.details?.type),readableStatus(item.details?.detail)].filter(Boolean).join(' / ');
+   const status=text||'상태 미확인';
+   output.push({team,name,status,source:'ESPN 선수 상태',sourceUrl:url,checkedAt:new Date().toISOString(),updatedAt:item.date||item.updated||null});
+  }
+ }
+ return [...new Map(output.map(r=>[r.team+'|'+r.name+'|'+r.status,r])).values()];
+}
+function parseLeaderRows(data,team,url){
+ const sections=[...(Array.isArray(data?.leaders)?data.leaders:[]),...(Array.isArray(data?.teamLeaders)?data.teamLeaders:[])];
+ const rows=new Map();
+ for(const group of sections){
+  const name=String(group.displayName||group.name||group.category?.displayName||group.category||'주요 기록').slice(0,35);
+  const athletes=Array.isArray(group.leaders)?group.leaders:Array.isArray(group.athletes)?group.athletes:[];
+  for(const item of athletes.slice(0,3)){
+   const nameValue=item.athlete?.displayName||item.athlete?.fullName||item.displayName||item.name;
+   if(!nameValue)continue;
+   const key=String(nameValue).toLowerCase(),prev=rows.get(key)||{team,name:nameValue,categories:[],sourceUrl:url};
+   if(!prev.categories.includes(name))prev.categories.push(name);rows.set(key,prev);
+  }
+ }
+ return [...rows.values()];
+}
 async function espnSupplement(g,l){
- const extra={injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]},root=ESPN+'/'+espnPath(l.sport)+'/'+l.espn;
- try{const d=await getJson(root+'/summary?event='+encodeURIComponent(g.externalId),900000);
- for(const p of d.pickcenter||[])if(p.details||p.overUnder)extra.odds.push({provider:p.provider?.name||'ESPN',spread:p.details||null,total:p.overUnder||null});
- for(const t of d.header?.competitions?.[0]?.competitors||[])if(t.records?.length)extra.available.push((t.team?.displayName||'')+': '+t.records.map(r=>r.summary).join(', '));
- for(const r of d.rosters||[]){const players=(r.roster||[]).filter(p=>p.starter===true).map(p=>p.athlete?.displayName).filter(Boolean);if(players.length)extra.lineups.push({team:r.team?.displayName||'',players});}
+ const extra={injuries:[],lineups:[],odds:[],news:[],leaders:[],h2h:[],available:[]};
+ const root=ESPN+'/'+espnPath(l.sport)+'/'+l.espn,ids=[g.home.id,g.away.id];
+ const eventUrl=root+'/summary?event='+encodeURIComponent(g.externalId);
+ try{
+  const d=await getJson(eventUrl,900000);
+  for(const p of d.pickcenter||[])if(p.details||p.overUnder)extra.odds.push({provider:p.provider?.name||'ESPN',spread:p.details||null,total:p.overUnder||null,sourceUrl:eventUrl});
+  for(const t of d.header?.competitions?.[0]?.competitors||[])if(t.records?.length)extra.available.push((t.team?.displayName||'')+': '+t.records.map(r=>r.summary).join(', '));
+  // ESPN "rosters" frequently refer to previous-game starters; they are NOT verified future lineups.
+  if(g.status==='live'||g.status==='final')for(const r of d.rosters||[]){
+   const players=(r.roster||[]).filter(p=>p.starter===true).map(p=>p.athlete?.displayName).filter(Boolean);
+   if(players.length)extra.lineups.push({team:r.team?.displayName||'',players,kind:'해당 경기 출전/선발 명단',sourceUrl:eventUrl});
+  }
  }catch(e){}
- const responses=await Promise.allSettled([g.home.id,g.away.id].map(id=>getJson(root+'/teams/'+encodeURIComponent(id)+'/injuries',600000)));
- for(let i=0;i<responses.length;i++){const r=responses[i];if(r.status!=='fulfilled')continue;
- for(const entry of (r.value.injuries||r.value.items||[]).slice(0,18)){const name=entry.athlete?.displayName||entry.name;if(name)extra.injuries.push({team:i===0?g.home.name:g.away.name,name,status:String(entry.status||entry.type?.description||'확인 중').slice(0,100)});}}
+ const injuryUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/injuries');
+ const injuryResults=await Promise.allSettled(injuryUrls.map(u=>getJson(u,600000)));
+ for(let i=0;i<injuryResults.length;i++){
+  const r=injuryResults[i];if(r.status!=='fulfilled')continue;
+  extra.injuries.push(...parseInjuryRows(r.value,i===0?g.home.name:g.away.name,injuryUrls[i]));
+ }
+ // Season leaders are evidence of importance; not a substitute for minutes or confirmed starter status.
+ if(extra.injuries.length){
+  const leaderUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/leaders');
+  const leaders=await Promise.allSettled(leaderUrls.map(u=>getJson(u,1200000)));
+  for(let i=0;i<leaders.length;i++)if(leaders[i].status==='fulfilled')extra.leaders.push(...parseLeaderRows(leaders[i].value,i===0?g.home.name:g.away.name,leaderUrls[i]));
+ }
+ // News endpoint can be unavailable for some leagues. Headlines are not "expert predictions."
+ const newsUrl=root+'/news?limit=80';
+ try{
+  const data=await getJson(newsUrl,900000);
+  for(const a of (data.articles||[]).slice(0,80)){
+   const title=a.headline||a.title,url=a.links?.web?.href||a.links?.mobile?.href;
+   if(title&&typeof url==='string'&&url.startsWith('https://'))extra.news.push({title:String(title).slice(0,180),url,source:'ESPN 기사',publishedAt:a.published||a.lastModified||null});
+  }
+ }catch(e){}
  return extra;
 }
+
 async function detail(g){
  const l=leagueById(g.league);if(!l)throw Error('리그를 찾지 못했습니다.');
  const international=l.id.startsWith('intl-');
- const emptyExtra=()=>({injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]});
+ const emptyExtra=()=>({injuries:[],lineups:[],odds:[],news:[],leaders:[],h2h:[],available:[]});
  const promises=[
   g.sourceType==='kbl'?kblOfficialRecent(g):g.sourceType==='espn'&&l.espn?espnRecent(g,l):tsdbRecent(g,l),
   g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve(emptyExtra()),
@@ -158,4 +220,4 @@ async function detail(g){
  return {history,extra,errors,strength:match?.strength||null};
 }
 
-module.exports={LEAGUES,listDay,findGame,detail,getJson,SOURCE_HEALTH,normalizeESPN,normalizeTSDB,kst};
+module.exports={LEAGUES,listDay,findGame,detail,getJson,SOURCE_HEALTH,normalizeESPN,normalizeTSDB,kst,parseInjuryRows,parseLeaderRows};
