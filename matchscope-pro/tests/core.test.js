@@ -53,7 +53,7 @@ test('Away team may be favored when actual scored/conceded evidence supports it'
   history.push({date,status:'final',home:{id:'a',name:'Japan',score:0},away:{id:'x'+i,name:'Opponent',score:2}});
   history.push({date,status:'final',home:{id:'y'+i,name:'Opponent',score:0},away:{id:'b',name:'Brazil',score:3}});
  }
- const m=model(g,history);
+ const m=model(g,history,{strength:{homeRating:1500,awayRating:1850,allTimeHomeGames:50,allTimeAwayGames:50,sourceLastMatch:'2026-10-06'}});
  assert.equal(m.available,true);
  assert.ok(m.probabilities.away>m.probabilities.home);
  assert.ok(m.expected.away>m.expected.home);
