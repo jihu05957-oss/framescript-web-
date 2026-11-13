@@ -3,7 +3,7 @@ const {LEAGUES,leagueById,espnPath}=require('./leagues');
 const {day:kblOfficialDay,recent:kblOfficialRecent}=require('./kbl');
 const ESPN='https://site.api.espn.com/apis/site/v2/sports';
 const TSDB='https://www.thesportsdb.com/api/v1/json/123';
-const CACHE=new Map(),SOURCE_HEALTH=new Map();
+const CACHE=new Map(),SOURCE_HEALTH=new Map(),GAME_INDEX=new Map();
 let active=0;const queue=[];
 function gate(){return new Promise(resolve=>{const run=()=>{active++;resolve(()=>{active--;if(queue.length)queue.shift()();})};if(active<6)run();else queue.push(run);});}
 async function getJson(url,ttl=300000){
@@ -90,8 +90,22 @@ async function listDay(date){
  const results=await Promise.allSettled(LEAGUES.map(l=>oneDay(l,date)));
  const games=unique(results.flatMap(r=>r.status==='fulfilled'?r.value.games:[])).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
  const statuses=LEAGUES.map((l,i)=>results[i].status==='fulfilled'?results[i].value.status:{id:l.id,league:l.name,count:0,status:'unavailable',coverage:'미보장'});
+ const now=Date.now();
+ for(const game of games)GAME_INDEX.set(date+'|'+game.id,{game,at:now});
+ if(GAME_INDEX.size>6000){for(const [key,val] of GAME_INDEX)if(now-val.at>1800000)GAME_INDEX.delete(key);}
  return {date,timezone:'Asia/Seoul',games,statuses,generatedAt:new Date().toISOString(),complete:false,
  warning:'무료 제공처 데이터는 리그별 커버리지가 달라 전체 경기의 누락 여부를 보장할 수 없습니다.'};
+}
+async function findGame(date,id){
+ const cache=GAME_INDEX.get(date+'|'+id);
+ if(cache&&Date.now()-cache.at<1800000)return cache.game;
+ const bits=String(id).split(':');
+ if(bits.length<3||!['espn','tsdb','kbl'].includes(bits[0]))return null;
+ const league=leagueById(bits[1]);
+ if(!league)return null;
+ const result=await oneDay(league,date);
+ for(const game of result.games)GAME_INDEX.set(date+'|'+game.id,{game,at:Date.now()});
+ return result.games.find(game=>game.id===id)||null;
 }
 async function espnRecent(g,l){
  const ids=[g.home.id,g.away.id].filter(Boolean),year=Number((g.date||'').slice(0,4))||new Date().getFullYear(),out=[];
@@ -125,4 +139,4 @@ async function detail(g){
  return {history:results[0].status==='fulfilled'?results[0].value:[],extra:results[1].status==='fulfilled'?results[1].value:{injuries:[],lineups:[],odds:[],news:[],h2h:[],available:[]},
  errors:results.filter(r=>r.status==='rejected').map(r=>r.reason?.message||'데이터 조회 실패')};
 }
-module.exports={LEAGUES,listDay,detail,getJson,SOURCE_HEALTH,normalizeESPN,normalizeTSDB,kst};
+module.exports={LEAGUES,listDay,findGame,detail,getJson,SOURCE_HEALTH,normalizeESPN,normalizeTSDB,kst};
