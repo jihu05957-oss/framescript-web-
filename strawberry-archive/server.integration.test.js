@@ -19,11 +19,25 @@ test('without permanent R2 no collection or upload starts, login still works',as
  try{
   const health=await awaitReady();
   assert.equal(health.ok,true);assert.equal(health.ready,false);assert.equal(health.persistent,false);
+  const noAuthGallery=await fetch(base+'/api/gallery');
+  assert.equal(noAuthGallery.status,401);
+  const noAuthMedia=await fetch(base+'/api/file/some-id');
+  assert.equal(noAuthMedia.status,401);
+  const noAuthUpload=await fetch(base+'/api/upload',{method:'POST'});
+  assert.equal(noAuthUpload.status,401);
   const publicState=await (await fetch(base+'/api/me')).json();
   assert.equal(publicState.ready,false);
   const login=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:appPass})});
   assert.equal(login.status,200);
+  const securityHeaders=login.headers;
+  assert.equal(securityHeaders.get('x-frame-options'),'DENY');
+  assert.ok(securityHeaders.get('content-security-policy').includes("frame-ancestors 'none'"));
+  assert.ok(securityHeaders.get('set-cookie').includes('HttpOnly'));
+  assert.ok(securityHeaders.get('set-cookie').includes('SameSite=Strict'));
+  assert.ok(securityHeaders.get('set-cookie').includes('Secure'));
   const cookieHeader=login.headers.get('set-cookie').split(';')[0];
+  const evilOrigin=await fetch(base+'/api/scan',{method:'POST',headers:{cookie:cookieHeader,Origin:'https://evil.example'}});
+  assert.equal(evilOrigin.status,403);
   const run=await fetch(base+'/api/scan',{method:'POST',headers:{cookie:cookieHeader}});
   assert.equal(run.status,503);
   const upload=await fetch(base+'/api/upload',{method:'POST',headers:{cookie:cookieHeader}});
