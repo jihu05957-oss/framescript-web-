@@ -161,41 +161,33 @@ function parseLeaderRows(data,team,url){
 async function espnSupplement(g,l){
  const extra={injuries:[],lineups:[],odds:[],news:[],leaders:[],h2h:[],available:[]};
  const root=ESPN+'/'+espnPath(l.sport)+'/'+l.espn,ids=[g.home.id,g.away.id];
- const eventUrl=root+'/summary?event='+encodeURIComponent(g.externalId);
- try{
-  const d=await getJson(eventUrl,900000);
+ const eventUrl=root+'/summary?event='+encodeURIComponent(g.externalId),newsUrl=root+'/news?limit=80';
+ const injuryUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/injuries');
+ const leaderUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/leaders');
+ // Independent requests in one wave prevent optional news/leader fetches from delaying core injury data.
+ const jobs=[eventUrl,...injuryUrls,...leaderUrls,newsUrl];
+ const settled=await Promise.allSettled(jobs.map((u,i)=>getJson(u,i===0?900000:i<3?600000:1200000)));
+ if(settled[0].status==='fulfilled'){
+  const d=settled[0].value;
   for(const p of d.pickcenter||[])if(p.details||p.overUnder)extra.odds.push({provider:p.provider?.name||'ESPN',spread:p.details||null,total:p.overUnder||null,sourceUrl:eventUrl});
   for(const t of d.header?.competitions?.[0]?.competitors||[])if(t.records?.length)extra.available.push((t.team?.displayName||'')+': '+t.records.map(r=>r.summary).join(', '));
-  // ESPN "rosters" frequently refer to previous-game starters; they are NOT verified future lineups.
   if(g.status==='live'||g.status==='final')for(const r of d.rosters||[]){
    const players=(r.roster||[]).filter(p=>p.starter===true).map(p=>p.athlete?.displayName).filter(Boolean);
-   if(players.length)extra.lineups.push({team:r.team?.displayName||'',players,kind:'해당 경기 출전/선발 명단',sourceUrl:eventUrl});
+   if(players.length)extra.lineups.push({team:r.team?.displayName||'',players,kind:'경기 종료/진행 중 확인된 라인업',sourceUrl:eventUrl});
   }
- }catch(e){}
- const injuryUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/injuries');
- const injuryResults=await Promise.allSettled(injuryUrls.map(u=>getJson(u,600000)));
- for(let i=0;i<injuryResults.length;i++){
-  const r=injuryResults[i];if(r.status!=='fulfilled')continue;
-  extra.injuries.push(...parseInjuryRows(r.value,i===0?g.home.name:g.away.name,injuryUrls[i]));
  }
- // Season leaders are evidence of importance; not a substitute for minutes or confirmed starter status.
- if(extra.injuries.length){
-  const leaderUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/leaders');
-  const leaders=await Promise.allSettled(leaderUrls.map(u=>getJson(u,1200000)));
-  for(let i=0;i<leaders.length;i++)if(leaders[i].status==='fulfilled')extra.leaders.push(...parseLeaderRows(leaders[i].value,i===0?g.home.name:g.away.name,leaderUrls[i]));
+ for(let i=0;i<2;i++){
+  const team=i===0?g.home.name:g.away.name;
+  if(settled[1+i].status==='fulfilled')extra.injuries.push(...parseInjuryRows(settled[1+i].value,team,injuryUrls[i]));
+  if(settled[3+i].status==='fulfilled')extra.leaders.push(...parseLeaderRows(settled[3+i].value,team,leaderUrls[i]));
  }
- // News endpoint can be unavailable for some leagues. Headlines are not "expert predictions."
- const newsUrl=root+'/news?limit=80';
- try{
-  const data=await getJson(newsUrl,900000);
-  for(const a of (data.articles||[]).slice(0,80)){
-   const title=a.headline||a.title,url=a.links?.web?.href||a.links?.mobile?.href;
-   if(title&&typeof url==='string'&&url.startsWith('https://'))extra.news.push({title:String(title).slice(0,180),url,source:'ESPN 기사',publishedAt:a.published||a.lastModified||null});
-  }
- }catch(e){}
+ if(settled[5].status==='fulfilled')for(const a of (settled[5].value.articles||[]).slice(0,80)){
+  const title=a.headline||a.title,url=a.links?.web?.href||a.links?.mobile?.href;
+  if(title&&typeof url==='string'&&url.startsWith('https://'))extra.news.push({title:String(title).slice(0,180),url,source:'ESPN 기사',publishedAt:a.published||a.lastModified||null});
+ }
+ extra.sourceChecks=jobs.map((url,i)=>({label:['경기 요약','홈팀 부상','원정팀 부상','홈팀 주요 선수','원정팀 주요 선수','현지 뉴스'][i],ok:settled[i].status==='fulfilled',sourceUrl:url}));
  return extra;
 }
-
 async function detail(g){
  const l=leagueById(g.league);if(!l)throw Error('리그를 찾지 못했습니다.');
  const international=l.id.startsWith('intl-');
