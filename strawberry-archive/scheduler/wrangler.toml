@@ -1,0 +1,9 @@
+name = "strawberry-moon-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-11-13"
+# 5-minute polling. This is not instant real-time delivery.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+ARCHIVE_URL = "https://strawberry-moon-iu-archive.onrender.com"
