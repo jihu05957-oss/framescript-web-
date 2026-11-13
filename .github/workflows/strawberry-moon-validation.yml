@@ -27,3 +27,5 @@ jobs:
         run: node --check strawberry-archive/scheduler/src/index.js
       - name: Test storage limit, deduplication and completion logic
         run: node --test strawberry-archive/archive-core.test.js
+      - name: Verify HTTP login and safe no-R2 behavior
+        run: node --test strawberry-archive/server.integration.test.js
