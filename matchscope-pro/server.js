@@ -1,6 +1,7 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
 const {LEAGUES}=require('./leagues'),{listDay,findGame,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
+const national=require('./national');
 const PORT=process.env.PORT||3000,ROOT=path.resolve(__dirname,'public');
 function send(res,status,payload){res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','access-control-allow-origin':'same-origin'});res.end(JSON.stringify(payload));}
 function validDate(day){if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))return false;const d=new Date(day+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===day&&Number(day.slice(0,4))>=2020&&Number(day.slice(0,4))<=2035;}
@@ -25,7 +26,7 @@ function demoHistory(game){
 async function handler(req,res){
  const url=new URL(req.url,'http://localhost'),route=url.pathname;
  if(req.method!=='GET')return send(res,405,{error:'GET만 허용됩니다.'});
- if(route==='/api/health')return send(res,200,{ok:true,app:'MatchScope Pro',time:new Date().toISOString(),providers:[...SOURCE_HEALTH.values()]});
+ if(route==='/api/health')return send(res,200,{ok:true,app:'MatchScope Pro',time:new Date().toISOString(),providers:[...SOURCE_HEALTH.values()],national:national.health()});
  if(route==='/api/leagues')return send(res,200,{leagues:LEAGUES});
  if(route==='/api/games'||route==='/api/analysis'){
  const date=url.searchParams.get('date');
@@ -53,9 +54,9 @@ async function handler(req,res){
    ]);
   }finally{if(timer)clearTimeout(timer);}
  }
- const prediction=model(game,facts.history);
+ const prediction=model(game,facts.history,{strength:facts.strength||null});
  console.info('Match analysis',JSON.stringify({league:game.league,source:game.sourceType,ms:Date.now()-started,history:facts.history.length,issues:facts.errors.length}));
- return send(res,200,{game,history:facts.history,extra:facts.extra,errors:facts.errors,prediction,generatedAt:new Date().toISOString(),analysisMode:facts.errors.length?'limited':'standard',
+ return send(res,200,{game,history:facts.history,extra:facts.extra,errors:facts.errors,prediction,generatedAt:new Date().toISOString(),strength:facts.strength||null,analysisMode:facts.errors.length?'limited':'standard',
  limitations:['공개 자료로 확인되지 않은 부상·선발·배당 등은 제공되지 않습니다.','통계 예측은 경기 결과나 수익을 보장하지 않습니다.','리그별 무료 소스 데이터가 누락될 수 있습니다.']});
  }catch(e){console.error(route,e?.message);return send(res,502,{error:'공개 경기 데이터를 가져오지 못했습니다.',detail:String(e?.message||e).slice(0,250)});}
  }
@@ -70,6 +71,8 @@ async function handler(req,res){
 const server=http.createServer((req,res)=>Promise.resolve(handler(req,res)).catch(e=>{if(!res.headersSent)send(res,500,{error:'예상하지 못한 서버 오류'});}));
 if(require.main===module)server.listen(PORT,'0.0.0.0',()=>{
  console.log('MatchScope Pro listening on '+PORT);
+ national.load().then(x=>console.log('National history dataset ready',JSON.stringify({rows:x.rows.length,latest:x.latest}))).catch(e=>console.warn('National history dataset unavailable',String(e.message||e)));
+
  const checks=[
   ['ESPN','https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=20261113&limit=10'],
   ['TheSportsDB','https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=2026-11-13&l=4328']
