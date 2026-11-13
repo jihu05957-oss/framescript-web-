@@ -47,17 +47,28 @@ async function espnSchedule(l,date){
  return {ok:results.some(r=>r.status==='fulfilled'),games:games.filter(g=>kst(g.date)===date)};
 }
 async function tsdbSchedule(l,date){
- const dates=[date,...(['mlb','nba'].includes(l.id)?[shift(date,-1)]:[])];let ok=false;const games=[];
+ if(!l.tsdb)return {games:[],ok:false};
+ const dates=[date,shift(date,-1)];let ok=false;const games=[];
  for(const d of dates){try{const data=await getJson(TSDB+'/eventsday.php?d='+d+'&l='+l.tsdb,720000);ok=true;
  for(const e of data.events||[])if(String(e.idLeague)===String(l.tsdb)){
  const game=normalizeTSDB(e,l);if(game&&(kst(game.date)===date||(!e.strTimestamp&&e.dateEvent===date)))games.push(game);
  }}catch(e){}}
  return {ok,games};
 }
-function unique(games){const map=new Map();
- for(const g of games){const key=g.league+':'+g.home.name.toLowerCase()+':'+g.away.name.toLowerCase()+':'+kst(g.date);
- if(!map.has(key)||g.sourceType==='espn')map.set(key,g);}
- return [...map.values()];}
+function comparableName(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()
+ .replace(/\b(football club|fc|cf|afc|sc|club|national team)\b/g,'').replace(/[^a-z0-9가-힣]+/g,'').trim();}
+function namesEqual(a,b){const x=comparableName(a),y=comparableName(b);return x===y||(x.length>=4&&y.length>=4&&(x.includes(y)||y.includes(x)));}
+function unique(games){
+ const out=[];
+ for(const g of games){if(!g?.date||!g.home||!g.away)continue;
+ const i=out.findIndex(v=>v.league===g.league&&kst(v.date)===kst(g.date)
+  &&Math.abs(new Date(v.date)-new Date(g.date))<10800000
+  &&namesEqual(v.home.name,g.home.name)&&namesEqual(v.away.name,g.away.name));
+ if(i<0)out.push(g);
+ else if(g.sourceType==='espn'||g.sourceType==='kbl')out[i]=g;
+ }
+ return out;
+}
 async function oneDay(l,date){
  if(l.id==='kbl'){
   let official={ok:false,games:[]},fallback={ok:false,games:[]},error=null;
@@ -70,7 +81,7 @@ async function oneDay(l,date){
 
  let a={games:[],ok:false},b={games:[],ok:false};
  try{a=await espnSchedule(l,date);}catch(e){}
- if(!a.games.length)try{b=await tsdbSchedule(l,date);}catch(e){}
+ try{b=await tsdbSchedule(l,date);}catch(e){}
  const games=unique([...a.games,...b.games]);
  const status={id:l.id,league:l.name,count:games.length,espn:a.ok,tsdb:b.ok,status:a.ok||b.ok?'ok':'unavailable',coverage:'미보장'};
  SOURCE_HEALTH.set(l.id,{...status,checkedAt:new Date().toISOString()});return {games,status};
