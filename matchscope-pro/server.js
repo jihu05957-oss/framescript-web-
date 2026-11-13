@@ -71,7 +71,16 @@ async function handler(req,res){
 const server=http.createServer((req,res)=>Promise.resolve(handler(req,res)).catch(e=>{if(!res.headersSent)send(res,500,{error:'예상하지 못한 서버 오류'});}));
 if(require.main===module)server.listen(PORT,'0.0.0.0',()=>{
  console.log('MatchScope Pro listening on '+PORT);
- national.load().then(x=>console.log('National history dataset ready',JSON.stringify({rows:x.rows.length,latest:x.latest}))).catch(e=>console.warn('National history dataset unavailable',String(e.message||e)));
+ national.load().then(x=>{
+  console.log('National history dataset ready',JSON.stringify({rows:x.rows.length,latest:x.latest}));
+  for(const [home,away] of [['Japan','Brazil'],['Saudi Arabia','South Korea']]){
+   try{
+    const fixture={id:'startup-check',date:'2026-11-14T11:00:00Z',sport:'soccer',league:'intl-friendly',status:'scheduled',home:{id:'home-'+home,name:home},away:{id:'away-'+away,name:away}};
+    const facts=national.matchFacts(fixture,x),result=model(fixture,facts.history,{strength:facts.strength});
+    console.info('National historical strength self-check',JSON.stringify({home,away,homeElo:facts.strength.homeRating,awayElo:facts.strength.awayRating,homeRecords:result.home.count,awayRecords:result.away.count,modelAvailable:result.available,homeWin:result.probabilities.home,awayWin:result.probabilities.away,referenceDate:'2026-11-14',hypothetical:true}));
+   }catch(e){console.warn('National sample strength check failed',home,away,String(e.message||e))}
+  }
+ }).catch(e=>console.warn('National history dataset unavailable',String(e.message||e)));
 
  const checks=[
   ['ESPN','https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=20261113&limit=10'],
