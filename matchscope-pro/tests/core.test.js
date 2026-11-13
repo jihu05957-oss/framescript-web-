@@ -18,7 +18,7 @@ test('HTTP homepage and simulated full analysis',async ()=>{
  try{
  const html=await fetch(base+'/');assert.equal(html.status,200);const s=await html.text();assert.match(s,/MATCHSCOPE/);assert.ok(!s.includes('PREVIEW_SCHEDULE'));
  const invalid=await fetch(base+'/api/games?date=2026-02-30');assert.equal(invalid.status,400);
- const games=await (await fetch(base+'/api/games?date=2026-11-13&demo=1')).json();assert.equal(games.games.length,13);
+ const games=await (await fetch(base+'/api/games?date=2026-11-13&demo=1')).json();assert.equal(games.games.length,LEAGUES.length);
  const id=encodeURIComponent(games.games[0].id),detail=await (await fetch(base+'/api/analysis?date=2026-11-13&demo=1&id='+id)).json();
  assert.equal(detail.prediction.topScores.length,5);assert.equal(detail.history.length,16);assert.equal(detail.game.league,games.games[0].league);
  }finally{await new Promise(ok=>server.close(ok));}
