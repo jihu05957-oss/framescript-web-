@@ -4,7 +4,7 @@ const {day:kblOfficialDay,recent:kblOfficialRecent}=require('./kbl');
 const national=require('./national');
 const ESPN='https://site.api.espn.com/apis/site/v2/sports';
 const TSDB='https://www.thesportsdb.com/api/v1/json/123';
-const CACHE=new Map(),SOURCE_HEALTH=new Map(),GAME_INDEX=new Map();
+const CACHE=new Map(),SOURCE_HEALTH=new Map(),GAME_INDEX=new Map(),DAY_DATA=new Map();
 let active=0;const queue=[];
 function gate(){return new Promise(resolve=>{const run=()=>{active++;resolve(()=>{active--;if(queue.length)queue.shift()();})};if(active<6)run();else queue.push(run);});}
 async function getJson(url,ttl=300000){
@@ -87,7 +87,7 @@ async function oneDay(l,date){
  const status={id:l.id,league:l.name,count:games.length,espn:a.ok,tsdb:b.ok,status:a.ok||b.ok?'ok':'unavailable',coverage:'미보장'};
  SOURCE_HEALTH.set(l.id,{...status,checkedAt:new Date().toISOString()});return {games,status};
 }
-async function listDay(date){
+async function rawDay(date){
  const results=await Promise.allSettled(LEAGUES.map(l=>oneDay(l,date)));
  const games=unique(results.flatMap(r=>r.status==='fulfilled'?r.value.games:[])).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
  const statuses=LEAGUES.map((l,i)=>results[i].status==='fulfilled'?results[i].value.status:{id:l.id,league:l.name,count:0,status:'unavailable',coverage:'미보장'});
@@ -97,6 +97,19 @@ async function listDay(date){
  return {date,timezone:'Asia/Seoul',games,statuses,generatedAt:new Date().toISOString(),complete:false,
  warning:'무료 제공처 데이터는 리그별 커버리지가 달라 전체 경기의 누락 여부를 보장할 수 없습니다.'};
 }
+async function listDay(date){
+ const old=DAY_DATA.get(date),now=Date.now();
+ if(old?.data&&now-old.at<240000)return old.data;
+ if(old?.pending)return old.pending;
+ const promise=rawDay(date);
+ DAY_DATA.set(date,{pending:promise,at:now});
+ try{
+  const data=await promise;DAY_DATA.set(date,{data,at:Date.now()});
+  if(DAY_DATA.size>20){for(const [key,v] of DAY_DATA)if(Date.now()-v.at>900000)DAY_DATA.delete(key);}
+  return data;
+ }catch(err){DAY_DATA.delete(date);throw err;}
+}
+
 async function findGame(date,id){
  const cache=GAME_INDEX.get(date+'|'+id);
  if(cache&&Date.now()-cache.at<1800000)return cache.game;
