@@ -171,7 +171,7 @@ app.get('/api/gallery',guard,(req,res)=>{
  let q=safe(req.query.q||'',80).toLowerCase(),filterYear=year(req.query.year),filterType=safe(req.query.type||'',20),filterActivity=safe(req.query.activity||'',30);
  let rows=state.items.filter(x=>(!q||[x.title,x.source,x.activity,x.year].join(' ').toLowerCase().includes(q))&&(!filterYear||filterYear===x.year)&&(!filterType||filterType===x.type)&&(!filterActivity||filterActivity===x.activity));
  let page=Math.max(1,Math.min(99999,Number(req.query.page)||1));
- res.json({total:rows.length,page,items:rows.slice((page-1)*48,page*48).map(({key,...p})=>p),years:[...new Set(state.items.map(x=>x.year).filter(Boolean))].sort((a,b)=>b-a)});
+ res.json({total:rows.length,page,imageCount:state.items.filter(x=>x.type==='image').length,videoCount:state.items.filter(x=>x.type==='video').length,items:rows.slice((page-1)*48,page*48).map(({key,...p})=>p),years:[...new Set(state.items.map(x=>x.year).filter(Boolean))].sort((a,b)=>b-a)});
 });
 app.get('/api/status',guard,(req,res)=>res.json({...status,total:state.items.length,cursor:{year:state.cursor.queue?.[0]?.year||null,pendingCategories:state.cursor.queue?.length||0,completedCategories:state.cursor.completed||0,lastCycle:state.cursor.lastCycle||null},updated:state.updated,storageError,persistent}));
 app.post('/api/scan',guard,(req,res)=>{if(!ready)return res.status(503).json({error:storageError||'영구 저장소 연결 필요'});pauseUntil=0;scheduleNext();res.json({ok:true,running:busy})});
