@@ -19,6 +19,11 @@ async function getJson(url,ttl=300000){
  CACHE.set(url,{pending,at:now});
  try{return await pending}catch(e){if(old?.data){CACHE.set(url,old);return old.data;}CACHE.delete(url);throw e;}
 }
+async function deadline(promise,ms){
+ let timer;
+ try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('data source request exceeded '+ms+'ms')),ms)})]);}
+ finally{if(timer)clearTimeout(timer);}
+}
 function kst(d){const v=new Date(d);return Number.isFinite(v.getTime())?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(v):null;}
 function iso(d){const x=new Date(d);return Number.isFinite(x.getTime())?x.toISOString():null;}
 function shift(day,offset){const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10);}
@@ -123,7 +128,9 @@ async function findGame(date,id){
 }
 async function espnRecent(g,l){
  const ids=[g.home.id,g.away.id].filter(Boolean),year=Number((g.date||'').slice(0,4))||new Date().getFullYear(),out=[];
- const seasons=l.id==='nba'?[year+1,year,year-1]:[year,year-1];
+ const month=Number((g.date||'').slice(5,7))||1;
+ const season=l.sport==='basketball'?month>=7?year+1:year:l.sport==='soccer'?month>=7?year+1:year:year;
+ const seasons=[season,season-1];
  const urls=ids.flatMap(id=>seasons.map(y=>ESPN+'/'+espnPath(l.sport)+'/'+l.espn+'/teams/'+encodeURIComponent(id)+'/schedule?season='+y+'&limit=100'));
  const responses=await Promise.allSettled(urls.map(u=>getJson(u,1200000)));
  for(const r of responses)if(r.status==='fulfilled')for(const e of r.value.events||[]){const v=normalizeESPN(e,l);if(v)out.push(v);}
@@ -179,7 +186,7 @@ async function espnSupplement(g,l){
  const leaderUrls=ids.map(id=>root+'/teams/'+encodeURIComponent(id)+'/leaders');
  // Independent requests in one wave prevent optional news/leader fetches from delaying core injury data.
  const jobs=[eventUrl,...injuryUrls,...leaderUrls,newsUrl];
- const settled=await Promise.allSettled(jobs.map((u,i)=>getJson(u,i===0?900000:i<3?600000:1200000)));
+ const settled=await Promise.allSettled(jobs.map((u,i)=>deadline(getJson(u,i===0?900000:i<3?600000:1200000),7200)));
  if(settled[0].status==='fulfilled'){
   const d=settled[0].value;
   for(const p of d.pickcenter||[])if(p.details||p.overUnder)extra.odds.push({provider:p.provider?.name||'ESPN',spread:p.details||null,total:p.overUnder||null,sourceUrl:eventUrl});
@@ -210,7 +217,7 @@ async function detail(g){
   g.sourceType==='espn'&&l.espn?espnSupplement(g,l):Promise.resolve(emptyExtra()),
   international?national.load().then(dataset=>national.matchFacts(g,dataset)):Promise.resolve(null)
  ];
- const results=await Promise.allSettled(promises);
+ const results=await Promise.allSettled(promises.map(p=>deadline(p,8800)));
  const extra=results[1].status==='fulfilled'?results[1].value:emptyExtra();
  const match=results[2].status==='fulfilled'?results[2].value:null;
  const raw=results[0].status==='fulfilled'?results[0].value:[];
