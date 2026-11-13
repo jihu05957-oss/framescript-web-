@@ -2,16 +2,32 @@
 const express=require('express'),multer=require('multer'),fs=require('fs'),path=require('path'),crypto=require('crypto');
 const {S3Client,PutObjectCommand,GetObjectCommand,DeleteObjectCommand}=require('@aws-sdk/client-s3');
 const sharp=require('sharp');
-const {ARCHIVE_FREE_CAP_BYTES,formatStorageStatus,hasRoom,archiveCompletion}=require('./archive-core');
+const {ARCHIVE_FREE_CAP_BYTES,formatStorageStatus,hasRoom,archiveCompletion,trustedSourceUrl,scanYearCategories}=require('./archive-core');
 const app=express();app.disable('x-powered-by');app.set('trust proxy',1);
 app.use(express.json({limit:'120kb'}));
-app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');res.set('Referrer-Policy','no-referrer');res.set('X-Frame-Options','DENY');next()});
+app.use((req,res,next)=>{
+  res.set('X-Content-Type-Options','nosniff');
+  res.set('Referrer-Policy','no-referrer');
+  res.set('X-Frame-Options','DENY');
+  res.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');
+  res.set('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
+  res.set('Cache-Control','no-store');
+  if(['POST','PUT','PATCH','DELETE'].includes(req.method)&&req.path!=='/api/cron-scan'){
+    const origin=req.get('origin');
+    const forwardedHost=req.get('x-forwarded-host');
+    const host=forwardedHost||req.get('host');
+    if(origin && origin!=='https://'+host && !(process.env.NODE_ENV==='test'&&origin==='http://'+host)){
+      return res.status(403).json({error:'허용되지 않은 요청 출처'});
+    }
+  }
+  next();
+});
 const PASSWORD=process.env.APP_PASSWORD,SECRET=process.env.COOKIE_SECRET;
 if(!PASSWORD||PASSWORD.length<12||!SECRET||SECRET.length<32)throw Error('Set APP_PASSWORD and COOKIE_SECRET');
 const persistent=['R2_ENDPOINT','R2_BUCKET','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY'].every(k=>!!process.env[k]);
 const s3=persistent?new S3Client({endpoint:process.env.R2_ENDPOINT,region:'auto',credentials:{accessKeyId:process.env.R2_ACCESS_KEY_ID,secretAccessKey:process.env.R2_SECRET_ACCESS_KEY}}):null;
 const bucket=process.env.R2_BUCKET,dir=path.join(__dirname,'data');fs.mkdirSync(dir,{recursive:true});
-const initialQueue=()=>Array.from({length:new Date().getFullYear()-2008},(_,i)=>({category:'Category:IU (vocalist) in '+(new Date().getFullYear()-i),year:new Date().getFullYear()-i,token:''}));
+const initialQueue=()=>scanYearCategories(new Date().getFullYear());
 const fresh=()=>({items:[],cursor:{queue:initialQueue(),seen:initialQueue().map(x=>x.category),completed:0,lastCycle:null,lastRecentCheck:null},unresolved:{},updated:null});
 let state=fresh(),ready=false,storageError='',busy=false,pauseUntil=0;
 let status={running:false,message:'영구 저장소 연결 대기',added:0,duplicates:0,skipped:0,failed:0,error:'',time:null};
@@ -65,7 +81,7 @@ async function addMediaInternal(bytes,info){
  if(persistent)await s3.send(new PutObjectCommand({Bucket:bucket,Key:key,Body:bytes,ContentType:mime}));
  else fs.writeFileSync(path.join(dir,sha+'.'+ext[mime]),bytes);
  let title=safe(info.title||'IU photo',220);
- const row={id:crypto.randomUUID(),sha,fingerprint,nearDuplicateOf,key,title,year:year(info.year),activity:safe(info.activity||activity(title),50),source:safe(info.source||'직접 업로드',120),sourceUrl:safe(info.sourceUrl||'',900),license:safe(info.license||'',120),author:safe(info.author||'',160),type:mime.startsWith('video/')?'video':'image',mime,size:bytes.length,created:Date.now()};
+ const row={id:crypto.randomUUID(),sha,fingerprint,nearDuplicateOf,key,title,year:year(info.year),activity:safe(info.activity||activity(title),50),source:safe(info.source||'직접 업로드',120),sourceUrl:trustedSourceUrl(info.sourceUrl),license:safe(info.license||'',120),author:safe(info.author||'',160),type:mime.startsWith('video/')?'video':'image',mime,size:bytes.length,created:Date.now()};
  state.items.unshift(row);
  try{await saveIndex()}catch(e){state.items=state.items.filter(x=>x.id!==row.id);if(persistent)await s3.send(new DeleteObjectCommand({Bucket:bucket,Key:key})).catch(()=>{});throw e}
  return 'added'
