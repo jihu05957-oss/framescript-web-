@@ -55,6 +55,7 @@
  const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)];
  let leagueData=[['kleague1','K리그 1','🇰🇷','soccer'],['kleague2','K리그 2','🇰🇷','soccer'],['epl','프리미어리그','🏴','soccer'],['laliga','라리가','🇪🇸','soccer'],['bundesliga','분데스리가','🇩🇪','soccer'],['seriea','세리에 A','🇮🇹','soccer'],['ligue1','리그 1','🇫🇷','soccer'],['j1','J1리그','🇯🇵','soccer'],['kbo','KBO','🇰🇷','baseball'],['mlb','MLB','🇺🇸','baseball'],['npb','NPB','🇯🇵','baseball'],['kbl','KBL','🇰🇷','basketball'],['nba','NBA','🇺🇸','basketball']];
  const state={date:'',games:[],statuses:[],sport:'all',league:'all',query:'',status:'all',favoritesOnly:false,loading:false,demo:false,activeGame:null,detail:null,tab:'overview',odds:{},oddsLine:null,lastFetch:null};
+ let batchToken=0;
  const safe=x=>String(x===undefined||x===null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const imageSafe=x=>{try{const u=new URL(x);return ['https:','http:'].includes(u.protocol)?safe(u.href):null}catch{return null}};
  const pct=x=>Number.isFinite(x)?(x*100).toFixed(1)+'%':'—';
@@ -102,11 +103,40 @@
  }
  function gameRow(g){const score=g.status==='scheduled'?'VS':(g.home.score??'-')+' : '+(g.away.score??'-');const home=logo(g.home),away=logo(g.away);
  return `<article class="game-row"><div class="game-time"><strong>${safe(timeKST(g.date))}</strong><span>${safe(statusName[g.status]||g.status)}</span></div><div class="match-teams"><div class="match-team home"><span class="match-name" title="${safe(g.home.name)}">${safe(g.home.name)}</span>${home}</div><div class="score-center ${g.status==='final'?'final':''}">${safe(score)}</div><div class="match-team away">${away}<span class="match-name" title="${safe(g.away.name)}">${safe(g.away.name)}</span></div></div><button class="analysis-action" data-analysis="${safe(g.id)}" aria-label="${safe(g.home.name)} 대 ${safe(g.away.name)} 분석">상세 분석 →</button><button class="star-button ${favorites.has(g.id)?'on':''}" data-favorite="${safe(g.id)}" title="관심 경기" aria-label="관심 경기 등록">${favorites.has(g.id)?'★':'☆'}</button></article>`}
- async function search(demo=false){if(window.MATCHSCOPE_PREVIEW)demo=true;if(state.loading)return;state.date=$('#dateInput').value||todayKST();state.demo=demo;state.loading=true;state.games=[];state.statuses=[];announcement('');render();$('#searchBtn').disabled=true;
+
+ function batchView(progress){
+  const root=$('#batchProgress');if(!root)return;
+  root.hidden=false;root.className='announcement';
+  if(progress.error){root.classList.add('error');root.textContent='자동 심층 조사: '+progress.error;return;}
+  root.textContent='전 경기 자동 심층 조사 · '+progress.done+' / '+progress.total+'경기 처리 · 확률 계산 가능 '+progress.complete+
+   '경기 · 근거 부족으로 확률 보류 '+progress.insufficient+'경기 · 오류 '+progress.errors+'경기'+
+   (progress.state==='finished'?' · 현재 수집 가능한 자료 조사 종료':' · 백그라운드 처리 중')+
+   '. 자료가 없다는 것은 결장자가 없거나 이변 가능성이 없다는 뜻이 아닙니다.';
+ }
+ async function prepareDay(date,token){
+  if(state.demo||!state.games.length||window.MATCHSCOPE_PREVIEW)return;
+  const root=$('#batchProgress');root.hidden=false;root.textContent='전 경기 자동 조사 시작 중...';
+  try{
+   const started=await fetch('/api/batch/start?date='+encodeURIComponent(date),{cache:'no-store'});
+   const p=await started.json();if(!started.ok)throw Error(p.error||'자동 조사 시작 실패');
+   if(token!==batchToken)return;
+   batchView(p);
+   for(let tries=0;tries<180&&token===batchToken&&p.state!=='finished';tries++){
+    await new Promise(resolve=>setTimeout(resolve,4000));
+    if(token!==batchToken)break;
+    const r=await fetch('/api/batch/status?date='+encodeURIComponent(date),{cache:'no-store'});
+    if(!r.ok)throw Error('조사 진행 상태 조회 실패');
+    Object.assign(p,await r.json());batchView(p);
+   }
+  }catch(err){if(token===batchToken)batchView({error:String(err.message||err)})}
+ }
+
+ async function search(demo=false){if(window.MATCHSCOPE_PREVIEW)demo=true;if(state.loading)return;state.date=$('#dateInput').value||todayKST();state.demo=demo;state.loading=true;state.games=[];state.statuses=[];announcement('');batchToken++;$('#batchProgress').hidden=true;render();$('#searchBtn').disabled=true;
   try{const u=`/api/games?date=${encodeURIComponent(state.date)}${demo?'&demo=1':''}`;const r=await fetch(u);const d=await r.json();if(!r.ok)throw Error(d.error||'조회 실패');state.games=d.games||[];state.statuses=d.statuses||[];state.lastFetch=d.generatedAt||new Date().toISOString();
    if(demo)announcement('가상 샘플 모드입니다. 팀·일정·전적·예측 값은 테스트용으로 생성되며 실제 경기가 아닙니다.');
    else{const unavailable=state.statuses.filter(s=>s.status==='unavailable');announcement(unavailable.length?`일부 리그(${unavailable.map(x=>x.league).join(', ')})의 소스 연결이 실패했습니다. 무료 API에서 제공되지 않는 경기도 있을 수 있습니다.`:'무료 데이터 소스는 일별 전체 경기의 완전성을 보장하지 않습니다. 2차 확인이 필요한 경우 해당 리그 공식 일정을 확인하세요.',unavailable.length>0)}
    if(!demo&&!state.games.length)toast('표시할 경기가 없습니다. 다른 날짜 또는 샘플 모드를 확인하세요.');
+   if(!demo&&state.games.length)prepareDay(state.date,batchToken);
   }catch(err){announcement(`경기 검색에 실패했습니다: ${err.message}. 네트워크 및 서버 연결을 확인하세요.`,true,true);toast('경기 데이터 연결 실패')}
   finally{state.loading=false;$('#searchBtn').disabled=false;render()}
  }
