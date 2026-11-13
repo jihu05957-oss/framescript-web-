@@ -18,4 +18,18 @@ function archiveCompletion({pendingCategories,unresolved,storageFull,connected})
  if(pendingCategories>0)return 'collecting';
  return 'source_scan_complete';
 }
-module.exports={ARCHIVE_FREE_CAP_BYTES,usedBytes,hasRoom,formatStorageStatus,isExactDuplicate,archiveCompletion};
+// Never open javascript:, data:, file:, or credential-bearing external links from the archive UI.
+function trustedSourceUrl(value){
+  if(!value)return '';
+  try{
+    const url=new URL(String(value));
+    if(url.protocol!=='https:'||url.username||url.password)return '';
+    return url.href.slice(0,900);
+  }catch{return ''}
+}
+function scanYearCategories(todayYear){
+  const y=Number(todayYear);
+  if(!Number.isInteger(y)||y<2008||y>2200)throw Error('Invalid current year');
+  return Array.from({length:y-2008+1},(_,i)=>({category:'Category:IU (vocalist) in '+(y-i),year:y-i,token:''}));
+}
+module.exports={ARCHIVE_FREE_CAP_BYTES,usedBytes,hasRoom,formatStorageStatus,isExactDuplicate,archiveCompletion,trustedSourceUrl,scanYearCategories};
