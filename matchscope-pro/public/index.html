@@ -52,7 +52,7 @@
 </style><script>'use strict';
 (()=>{
  const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)];
- const leagueData=[['kleague1','K리그 1','🇰🇷','soccer'],['kleague2','K리그 2','🇰🇷','soccer'],['epl','프리미어리그','🏴','soccer'],['laliga','라리가','🇪🇸','soccer'],['bundesliga','분데스리가','🇩🇪','soccer'],['seriea','세리에 A','🇮🇹','soccer'],['ligue1','리그 1','🇫🇷','soccer'],['j1','J1리그','🇯🇵','soccer'],['kbo','KBO','🇰🇷','baseball'],['mlb','MLB','🇺🇸','baseball'],['npb','NPB','🇯🇵','baseball'],['kbl','KBL','🇰🇷','basketball'],['nba','NBA','🇺🇸','basketball']];
+ let leagueData=[['kleague1','K리그 1','🇰🇷','soccer'],['kleague2','K리그 2','🇰🇷','soccer'],['epl','프리미어리그','🏴','soccer'],['laliga','라리가','🇪🇸','soccer'],['bundesliga','분데스리가','🇩🇪','soccer'],['seriea','세리에 A','🇮🇹','soccer'],['ligue1','리그 1','🇫🇷','soccer'],['j1','J1리그','🇯🇵','soccer'],['kbo','KBO','🇰🇷','baseball'],['mlb','MLB','🇺🇸','baseball'],['npb','NPB','🇯🇵','baseball'],['kbl','KBL','🇰🇷','basketball'],['nba','NBA','🇺🇸','basketball']];
  const state={date:'',games:[],statuses:[],sport:'all',league:'all',query:'',status:'all',favoritesOnly:false,loading:false,demo:false,activeGame:null,detail:null,tab:'overview',odds:{},oddsLine:null,lastFetch:null};
  const safe=x=>String(x===undefined||x===null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const imageSafe=x=>{try{const u=new URL(x);return ['https:','http:'].includes(u.protocol)?safe(u.href):null}catch{return null}};
@@ -172,7 +172,13 @@
  $('#detailBackdrop').addEventListener('change',e=>{if(e.target.id==='oddsLine'){state.oddsLine=Number(e.target.value);state.odds.over='';state.odds.under='';renderDetail()}});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#detailBackdrop').classList.contains('open')?closeModal():toggleMobile(false)}})
  }
- function init(){state.date=todayKST();$('#dateInput').value=state.date;buildSidebar();bind();updateStats();search(Boolean(window.MATCHSCOPE_PREVIEW))}init();
+ async function init(){state.date=todayKST();$('#dateInput').value=state.date;
+  if(!window.MATCHSCOPE_PREVIEW)try{
+   const r=await fetch('/api/leagues',{cache:'no-store'});
+   if(r.ok){const data=await r.json();if(Array.isArray(data.leagues)&&data.leagues.length)leagueData=data.leagues.map(l=>[l.id,l.name,l.flag,l.sport]);}
+  }catch(err){console.warn('리그 목록 조회 실패',err)}
+  buildSidebar();bind();updateStats();search(Boolean(window.MATCHSCOPE_PREVIEW))
+ }init();
  // Refresh only while the page is open; no background harvesting is claimed.
  setInterval(()=>{if(!document.hidden&&!state.loading&&!state.demo&&state.date===todayKST())search(false)},10*60*1000);
 })();
