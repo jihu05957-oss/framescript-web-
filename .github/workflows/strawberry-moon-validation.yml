@@ -1,0 +1,31 @@
+name: Strawberry Moon validation
+on:
+  push:
+    branches:
+      - strawberry-moon-free-storage-v4
+    paths:
+      - 'strawberry-archive/**'
+      - '.github/workflows/strawberry-moon-validation.yml'
+  pull_request:
+    branches:
+      - strawberry-moon-archive
+  workflow_dispatch:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: cd strawberry-archive && npm install --omit=dev
+      - name: Parse Node server JavaScript
+        run: node --check strawberry-archive/server.js
+      - name: Parse Cloudflare Worker JavaScript
+        run: node --check strawberry-archive/scheduler/src/index.js
+      - name: Test storage limit, deduplication and completion logic
+        run: node --test strawberry-archive/archive-core.test.js
+      - name: Verify HTTP login and safe no-R2 behavior
+        run: node --test strawberry-archive/server.integration.test.js

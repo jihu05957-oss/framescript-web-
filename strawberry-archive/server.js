@@ -2,20 +2,37 @@
 const express=require('express'),multer=require('multer'),fs=require('fs'),path=require('path'),crypto=require('crypto');
 const {S3Client,PutObjectCommand,GetObjectCommand,DeleteObjectCommand}=require('@aws-sdk/client-s3');
 const sharp=require('sharp');
+const {ARCHIVE_FREE_CAP_BYTES,formatStorageStatus,hasRoom,archiveCompletion,trustedSourceUrl,scanYearCategories}=require('./archive-core');
 const app=express();app.disable('x-powered-by');app.set('trust proxy',1);
 app.use(express.json({limit:'120kb'}));
-app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');res.set('Referrer-Policy','no-referrer');res.set('X-Frame-Options','DENY');next()});
+app.use((req,res,next)=>{
+  res.set('X-Content-Type-Options','nosniff');
+  res.set('Referrer-Policy','no-referrer');
+  res.set('X-Frame-Options','DENY');
+  res.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');
+  res.set('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
+  res.set('Cache-Control','no-store');
+  if(['POST','PUT','PATCH','DELETE'].includes(req.method)&&req.path!=='/api/cron-scan'){
+    const origin=req.get('origin');
+    const forwardedHost=req.get('x-forwarded-host');
+    const host=forwardedHost||req.get('host');
+    if(origin && origin!=='https://'+host && !(process.env.NODE_ENV==='test'&&origin==='http://'+host)){
+      return res.status(403).json({error:'허용되지 않은 요청 출처'});
+    }
+  }
+  next();
+});
 const PASSWORD=process.env.APP_PASSWORD,SECRET=process.env.COOKIE_SECRET;
 if(!PASSWORD||PASSWORD.length<12||!SECRET||SECRET.length<32)throw Error('Set APP_PASSWORD and COOKIE_SECRET');
 const persistent=['R2_ENDPOINT','R2_BUCKET','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY'].every(k=>!!process.env[k]);
 const s3=persistent?new S3Client({endpoint:process.env.R2_ENDPOINT,region:'auto',credentials:{accessKeyId:process.env.R2_ACCESS_KEY_ID,secretAccessKey:process.env.R2_SECRET_ACCESS_KEY}}):null;
 const bucket=process.env.R2_BUCKET,dir=path.join(__dirname,'data');fs.mkdirSync(dir,{recursive:true});
-const initialQueue=()=>Array.from({length:new Date().getFullYear()-2007},(_,i)=>({category:'Category:IU (vocalist) in '+(i+2008),year:i+2008,token:''}));
-const fresh=()=>({items:[],cursor:{queue:initialQueue(),seen:initialQueue().map(x=>x.category),completed:0,lastCycle:null},updated:null});
-let state=fresh(),ready=false,storageError='',busy=false,pauseUntil=0,manualWake=false;
+const initialQueue=()=>scanYearCategories(new Date().getFullYear());
+const fresh=()=>({items:[],cursor:{queue:initialQueue(),seen:initialQueue().map(x=>x.category),completed:0,lastCycle:null,lastRecentCheck:null},unresolved:{},updated:null});
+let state=fresh(),ready=false,storageError='',busy=false,pauseUntil=0;
 let status={running:false,message:'영구 저장소 연결 대기',added:0,duplicates:0,skipped:0,failed:0,error:'',time:null};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const inflight=new Map();
+let saveMediaChain=Promise.resolve();
 const safe=(x,n=200)=>String(x??'').replace(/[\x00-\x1f]/g,' ').slice(0,n);
 const sig=x=>crypto.createHmac('sha256',SECRET).update(x).digest('hex');
 const eq=(a,b)=>{let x=Buffer.from(String(a)),y=Buffer.from(String(b));return x.length===y.length&&crypto.timingSafeEqual(x,y)};
@@ -27,6 +44,7 @@ const ext={ 'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif'
 function activity(text){let s=text.toLowerCase();for(const [name,keys] of [['공연',['concert','hereh','tour','콘서트','팬미팅']],['드라마·영화',['drama','movie','폭싹','호텔 델루나','드라마','영화']],['화보',['vogue','elle','잡지','화보','magazine']],['광고',['campaign','brand','광고','gucci']],['음악',['album','palette','앨범','lilac']],['행사',['award','시상식','공항','팬싸','레드카펫']]])if(keys.some(k=>s.includes(k)))return name;return '미분류'}
 async function streamString(b){if(b.transformToString)return b.transformToString();let x='';for await(const p of b)x+=p.toString();return x}
 async function load(){try{if(!persistent)throw Error('Cloudflare R2 영구 저장소를 연결해야 자동 수집을 시작할 수 있습니다');if(persistent){try{let o=await s3.send(new GetObjectCommand({Bucket:bucket,Key:'state/index.json'}));state=JSON.parse(await streamString(o.Body))}catch(e){if(e.name!=='NoSuchKey'&&e.$metadata?.httpStatusCode!==404)throw e}}else if(fs.existsSync(path.join(dir,'index.json')))state=JSON.parse(fs.readFileSync(path.join(dir,'index.json'),'utf8'));if(!Array.isArray(state.items)||!state.cursor)throw Error('자료 목록 형식 오류');
+ if(!state.unresolved||typeof state.unresolved!=='object')state.unresolved={};
  if(!Array.isArray(state.cursor.queue)){
   state.cursor={queue:initialQueue(),seen:initialQueue().map(x=>x.category),completed:0,lastCycle:null};
  }
@@ -40,16 +58,14 @@ async function load(){try{if(!persistent)throw Error('Cloudflare R2 영구 저�
  ready=true; console.log('R2 storage read/write verification OK');
 }catch(e){storageError='저장소 연결 실패: '+e.message;console.error(storageError)}}
 let writeQueue=Promise.resolve();
-function saveIndex(){writeQueue=writeQueue.then(async()=>{const body=JSON.stringify(state);if(persistent)await s3.send(new PutObjectCommand({Bucket:bucket,Key:'state/index.json',Body:body,ContentType:'application/json'}));else{fs.writeFileSync(path.join(dir,'index.tmp'),body);fs.renameSync(path.join(dir,'index.tmp'),path.join(dir,'index.json'))}});return writeQueue}
-async function addMedia(bytes,info){
+function saveIndex(){writeQueue=writeQueue.catch(()=>{}).then(async()=>{const body=JSON.stringify(state);if(persistent)await s3.send(new PutObjectCommand({Bucket:bucket,Key:'state/index.json',Body:body,ContentType:'application/json'}));else{fs.writeFileSync(path.join(dir,'index.tmp'),body);fs.renameSync(path.join(dir,'index.tmp'),path.join(dir,'index.json'))}});return writeQueue}
+async function addMediaInternal(bytes,info){
  if(!ready)throw Error(storageError||'저장소 준비 중');
  let mime=safe(info.mime,100).split(';')[0].toLowerCase();if(!ext[mime]||bytes.length<100||bytes.length>40*1024*1024)throw Error('파일 형식 또는 크기 제한 (최대 40MB)');
  const sha=crypto.createHash('sha256').update(bytes).digest('hex');
  if(state.items.some(x=>x.sha===sha))return 'duplicate';
- while(inflight.has(sha))await inflight.get(sha);
- if(state.items.some(x=>x.sha===sha))return 'duplicate';
- let release;const lock=new Promise(resolve=>{release=resolve});inflight.set(sha,lock);
- try{
+ if(!hasRoom(state.items,bytes.length)){const e=new Error('R2 무료 저장 공간이 가득 찼습니다. 다른 사진을 삭제하거나 저장소를 확장하세요.');e.code='STORAGE_FULL';throw e}
+ {
  let fingerprint=null;
  if(mime.startsWith('image/')){try{
    const out=await sharp(bytes,{limitInputPixels:50000000,animated:false}).greyscale().resize(9,8,{fit:'fill'}).raw().toBuffer({resolveWithObject:true});
@@ -57,16 +73,23 @@ async function addMedia(bytes,info){
    const metadata=await sharp(bytes).metadata();
    fingerprint={hash:bits.toString(16).padStart(16,'0'),ratio:Number((metadata.width/metadata.height).toFixed(3))};
  }catch(e){console.warn('Unable to compute visual fingerprint:',e.message)}}
- if(fingerprint){for(const item of state.items){if(!item.fingerprint||Math.abs(item.fingerprint.ratio-fingerprint.ratio)>0.015)continue;let xor=BigInt('0x'+item.fingerprint.hash)^BigInt('0x'+fingerprint.hash);let diff=0;while(xor){diff++;xor=xor&(xor-1n)}if(diff<=2)return 'duplicate'}}
+ // Perceptual similarity is advisory: distinct frames can have identical dHash.
+ // Byte-identical SHA-256 duplicates are rejected; visual matches get a review label.
+ let nearDuplicateOf=null;
+ if(fingerprint){for(const item of state.items){if(!item.fingerprint||Math.abs(item.fingerprint.ratio-fingerprint.ratio)>0.015)continue;let xor=BigInt('0x'+item.fingerprint.hash)^BigInt('0x'+fingerprint.hash);let diff=0;while(xor){diff++;xor=xor&(xor-1n)}if(diff<=2){nearDuplicateOf=item.id;break}}}
  let key='media/'+sha+'.'+ext[mime];
  if(persistent)await s3.send(new PutObjectCommand({Bucket:bucket,Key:key,Body:bytes,ContentType:mime}));
  else fs.writeFileSync(path.join(dir,sha+'.'+ext[mime]),bytes);
  let title=safe(info.title||'IU photo',220);
- const row={id:crypto.randomUUID(),sha,fingerprint,key,title,year:year(info.year),activity:safe(info.activity||activity(title),50),source:safe(info.source||'직접 업로드',120),sourceUrl:safe(info.sourceUrl||'',900),license:safe(info.license||'',120),author:safe(info.author||'',160),type:mime.startsWith('video/')?'video':'image',mime,size:bytes.length,created:Date.now()};
+ const row={id:crypto.randomUUID(),sha,fingerprint,nearDuplicateOf,key,title,year:year(info.year),activity:safe(info.activity||activity(title),50),source:safe(info.source||'직접 업로드',120),sourceUrl:trustedSourceUrl(info.sourceUrl),license:safe(info.license||'',120),author:safe(info.author||'',160),type:mime.startsWith('video/')?'video':'image',mime,size:bytes.length,created:Date.now()};
  state.items.unshift(row);
- try{await saveIndex()}catch(e){state.items=state.items.filter(x=>x.id!==row.id);throw e}
+ try{await saveIndex()}catch(e){state.items=state.items.filter(x=>x.id!==row.id);if(persistent)await s3.send(new DeleteObjectCommand({Bucket:bucket,Key:key})).catch(()=>{});throw e}
  return 'added'
- }finally{inflight.delete(sha);release()}
+ }
+}
+function addMedia(bytes,info){
+  const task=saveMediaChain.catch(()=>{}).then(()=>addMediaInternal(bytes,info));
+  saveMediaChain=task.catch(()=>{});return task
 }
 const plain=x=>safe(String(x||'').replace(/<[^>]+>/g,' ').replace(/&[^; ]+;/g,' '),230);
 const USER_AGENT='StrawberryMoonIUArchive/3.0 (https://strawberry-moon-iu-archive.onrender.com; personal archival app)';
@@ -118,6 +141,14 @@ async function continuousScan(){
   busy=true;status={running:true,message:'2008년부터 전체 공개자료 탐색 중',added:0,duplicates:0,skipped:0,failed:0,error:'',time:new Date().toISOString()};
   try{
     if(!state.cursor.queue.length)initializeCycle();
+    // Keep recent-year checks ahead of the historical backlog, but never reset progress.
+    const freshYear=new Date().getFullYear();
+    const recentCat='Category:IU (vocalist) in '+freshYear;
+    const last=Date.parse(state.cursor.lastRecentCheck||'')||0;
+    if(Date.now()-last>5*60000 && !state.cursor.queue.some(t=>t.category===recentCat)){
+      state.cursor.queue.unshift({category:recentCat,year:freshYear,token:''});
+      state.cursor.lastRecentCheck=new Date().toISOString();
+    }
     while(ready&&state.cursor.queue.length){
       const task=state.cursor.queue[0];
       status.message='연도 '+task.year+' · '+task.category+' · 처리 중';
@@ -139,10 +170,11 @@ async function continuousScan(){
           const file=await commonsDownload(info.url);
           const result=await addMedia(file.bytes,{mime:file.mime,title:p.title.replace(/^File:/,''),year:task.year,source:'Wikimedia Commons (팬 촬영 포함)',sourceUrl,author:plain(info.extmetadata?.Artist?.value),license:plain(info.extmetadata?.LicenseShortName?.value)});
           if(result==='added')status.added++;else status.duplicates++;
+          delete state.unresolved[sourceUrl];
         }catch(e){
-          if(e.retryable)throw e;
-          status.failed++;console.warn('Media not saved, retained for retry:',p.title,e.message);
-          // Revisit failed files in future full cycles rather than mark as collected.
+          if(e.retryable||e.code==='STORAGE_FULL')throw e;
+          state.unresolved[sourceUrl]={title:safe(p.title,180),year:task.year,error:safe(e.message,160),checkedAt:new Date().toISOString()};
+          status.failed++;console.warn('Media not saved; unresolved until a later scan:',p.title,e.message);
         }
         await sleep(1800);
       }
@@ -154,13 +186,15 @@ async function continuousScan(){
     }
     state.cursor.lastCycle=new Date().toISOString();
     await saveIndex();
-    status.message='전체 연도 탐색 완료 · 새 자료는 12시간마다 재확인';
-  }catch(e){status.error=e.message;status.message='일시 중단: '+e.message;pauseUntil=Date.now()+60*60000;console.error('Collector paused:',e.message)}
+    status.message=Object.keys(state.unresolved).length
+      ?'등록된 공개 출처 탐색 완료 · 미수집 파일 '+Object.keys(state.unresolved).length+'개, 재확인 필요'
+      :'등록된 공개 출처의 이번 탐색 완료 · 새 자료 주기적 확인 중';
+  }catch(e){status.error=e.message;status.message='일시 중단: '+e.message;pauseUntil=Date.now()+(e.code==='STORAGE_FULL'?24*3600000:60*60000);console.error('Collector paused:',e.message)}
   finally{busy=false;status.running=false;status.time=new Date().toISOString()}
 }
 function scheduleNext(){
  if(!ready||busy||Date.now()<pauseUntil)return;
- if(!state.cursor.queue.length&&state.cursor.lastCycle&&Date.now()-new Date(state.cursor.lastCycle).getTime()<12*3600000)return;
+ if(!state.cursor.queue.length&&state.cursor.lastCycle&&Date.now()-new Date(state.cursor.lastCycle).getTime()<5*60000)return;
  continuousScan().catch(e=>console.error('collector failure:',e));
 }
 const failed=new Map();
@@ -173,8 +207,22 @@ app.get('/api/gallery',guard,(req,res)=>{
  let page=Math.max(1,Math.min(99999,Number(req.query.page)||1));
  res.json({total:rows.length,page,imageCount:state.items.filter(x=>x.type==='image').length,videoCount:state.items.filter(x=>x.type==='video').length,items:rows.slice((page-1)*48,page*48).map(({key,...p})=>p),years:[...new Set(state.items.map(x=>x.year).filter(Boolean))].sort((a,b)=>b-a)});
 });
-app.get('/api/status',guard,(req,res)=>res.json({...status,total:state.items.length,cursor:{year:state.cursor.queue?.[0]?.year||null,pendingCategories:state.cursor.queue?.length||0,completedCategories:state.cursor.completed||0,lastCycle:state.cursor.lastCycle||null},updated:state.updated,storageError,persistent}));
+app.get('/api/status',guard,(req,res)=>{
+ const store=formatStorageStatus(state.items);
+ const pending=state.cursor.queue?.length||0;
+ const unresolved=Object.keys(state.unresolved||{}).length;
+ const completion=archiveCompletion({pendingCategories:pending,unresolved,storageFull:store.full,connected:ready});
+ res.json({...status,total:state.items.length,storage:store,unresolved,completion,cursor:{year:state.cursor.queue?.[0]?.year||null,pendingCategories:pending,completedCategories:state.cursor.completed||0,lastCycle:state.cursor.lastCycle||null,lastRecentCheck:state.cursor.lastRecentCheck||null},updated:state.updated,storageError,persistent});
+});
 app.post('/api/scan',guard,(req,res)=>{if(!ready)return res.status(503).json({error:storageError||'영구 저장소 연결 필요'});pauseUntil=0;scheduleNext();res.json({ok:true,running:busy})});
+app.post('/api/cron-scan',(req,res)=>{
+ const token=process.env.CRON_SECRET;
+ const presented=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
+ if(!token||token.length<32||!eq(presented,token))return res.status(403).json({error:'인증 실패'});
+ if(!ready)return res.status(503).json({error:storageError||'R2 저장소 연결 필요'});
+ scheduleNext();
+ res.json({ok:true,running:busy});
+});
 const uploader=multer({storage:multer.memoryStorage(),limits:{fileSize:40*1024*1024,files:10}});
 app.post('/api/upload',guard,uploader.array('files',10),wrap(async(req,res)=>{
  if(!ready)return res.status(503).json({error:storageError||'영구 저장소 연결 필요'});
@@ -189,7 +237,7 @@ app.get('/api/file/:id',guard,wrap(async(req,res)=>{
  else{let f=path.join(dir,path.basename(p.key));if(!fs.existsSync(f))return res.status(404).json({error:'임시 저장 파일이 사라졌습니다'});let size=fs.statSync(f).size;let m=/bytes=(\d+)-(\d*)/.exec(req.headers.range||'');if(m){let a=Number(m[1]),b=m[2]?Math.min(size-1,Number(m[2])):size-1;if(a>=size||b<a)return res.status(416).end();res.status(206).set('Content-Range','bytes '+a+'-'+b+'/'+size).set('Content-Length',String(b-a+1));fs.createReadStream(f,{start:a,end:b}).pipe(res)}else{res.set('Content-Length',String(size));fs.createReadStream(f).pipe(res)}}
 }));
 app.delete('/api/gallery/:id',guard,wrap(async(req,res)=>{let n=state.items.findIndex(x=>x.id===req.params.id);if(n<0)return res.status(404).json({error:'파일 없음'});let [p]=state.items.splice(n,1);await saveIndex();if(persistent)await s3.send(new DeleteObjectCommand({Bucket:bucket,Key:p.key})).catch(()=>{});else fs.rmSync(path.join(dir,path.basename(p.key)),{force:true});res.json({ok:true})}));
-app.get('/api/health',(req,res)=>res.json({ok:true,ready,persistent}));
+app.get('/api/health',(req,res)=>res.json({ok:true,ready,persistent,freeCapBytes:ARCHIVE_FREE_CAP_BYTES}));
 app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));
 app.use((e,req,res,next)=>{console.error(e);res.status(e.code==='LIMIT_FILE_SIZE'?413:500).json({error:e.code==='LIMIT_FILE_SIZE'?'40MB 이하 파일만 업로드할 수 있어요':safe(e.message,150)})});
 load().then(()=>{app.listen(process.env.PORT||10000,'0.0.0.0',()=>console.log('Archive startup | persistent storage '+persistent+' | ready '+ready));if(ready)scheduleNext();setInterval(scheduleNext,60000).unref()});
