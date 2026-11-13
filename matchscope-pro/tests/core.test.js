@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {LEAGUES}=require('../leagues'),{model}=require('../model'),{server,validDate}=require('../server');
-test('13 leagues and all three sports',()=>{assert.equal(LEAGUES.length,13);assert.deepEqual([...new Set(LEAGUES.map(x=>x.sport))].sort(),['baseball','basketball','soccer']);});
+test('22 leagues including Eredivisie and international fixtures with all three sports',()=>{assert.equal(LEAGUES.length,22);assert.ok(LEAGUES.some(l=>l.id==='eredivisie'));assert.ok(LEAGUES.some(l=>l.id==='intl-friendly'));assert.ok(LEAGUES.some(l=>l.id==='intl-uefa-nations'));assert.deepEqual([...new Set(LEAGUES.map(x=>x.sport))].sort(),['baseball','basketball','soccer']);});
 test('date validation',()=>{assert.ok(validDate('2026-11-13'));assert.ok(!validDate('2026-02-30'));assert.ok(!validDate('2026-13-01'));});
 for(const sport of ['soccer','baseball','basketball']){
  test('valid probabilities '+sport,()=>{
