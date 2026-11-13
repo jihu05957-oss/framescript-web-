@@ -110,7 +110,8 @@ async function findGame(date,id){
 }
 async function espnRecent(g,l){
  const ids=[g.home.id,g.away.id].filter(Boolean),year=Number((g.date||'').slice(0,4))||new Date().getFullYear(),out=[];
- const urls=ids.flatMap(id=>[year,year-1].map(y=>ESPN+'/'+espnPath(l.sport)+'/'+l.espn+'/teams/'+encodeURIComponent(id)+'/schedule?season='+y+'&limit=100'));
+ const seasons=l.id==='nba'?[year+1,year,year-1]:[year,year-1];
+ const urls=ids.flatMap(id=>seasons.map(y=>ESPN+'/'+espnPath(l.sport)+'/'+l.espn+'/teams/'+encodeURIComponent(id)+'/schedule?season='+y+'&limit=100'));
  const responses=await Promise.allSettled(urls.map(u=>getJson(u,1200000)));
  for(const r of responses)if(r.status==='fulfilled')for(const e of r.value.events||[]){const v=normalizeESPN(e,l);if(v)out.push(v);}
  return [...new Map(out.map(x=>[x.externalId,x])).values()];
