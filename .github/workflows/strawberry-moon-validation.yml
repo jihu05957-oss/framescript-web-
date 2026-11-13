@@ -6,6 +6,9 @@ on:
     paths:
       - 'strawberry-archive/**'
       - '.github/workflows/strawberry-moon-validation.yml'
+  pull_request:
+    branches:
+      - strawberry-moon-archive
   workflow_dispatch:
 jobs:
   tests:
