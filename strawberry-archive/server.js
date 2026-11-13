@@ -45,10 +45,10 @@ let writeQueue=Promise.resolve();
 function saveIndex(){writeQueue=writeQueue.catch(()=>{}).then(async()=>{const body=JSON.stringify(state);if(persistent)await s3.send(new PutObjectCommand({Bucket:bucket,Key:'state/index.json',Body:body,ContentType:'application/json'}));else{fs.writeFileSync(path.join(dir,'index.tmp'),body);fs.renameSync(path.join(dir,'index.tmp'),path.join(dir,'index.json'))}});return writeQueue}
 async function addMediaInternal(bytes,info){
  if(!ready)throw Error(storageError||'저장소 준비 중');
- if(!hasRoom(state.items,bytes.length)){const e=new Error('R2 무료 저장 공간이 가득 찼습니다. 다른 사진을 삭제하거나 저장소를 확장하세요.');e.code='STORAGE_FULL';throw e}
  let mime=safe(info.mime,100).split(';')[0].toLowerCase();if(!ext[mime]||bytes.length<100||bytes.length>40*1024*1024)throw Error('파일 형식 또는 크기 제한 (최대 40MB)');
  const sha=crypto.createHash('sha256').update(bytes).digest('hex');
  if(state.items.some(x=>x.sha===sha))return 'duplicate';
+ if(!hasRoom(state.items,bytes.length)){const e=new Error('R2 무료 저장 공간이 가득 찼습니다. 다른 사진을 삭제하거나 저장소를 확장하세요.');e.code='STORAGE_FULL';throw e}
  {
  let fingerprint=null;
  if(mime.startsWith('image/')){try{
@@ -129,7 +129,7 @@ async function continuousScan(){
     const freshYear=new Date().getFullYear();
     const recentCat='Category:IU (vocalist) in '+freshYear;
     const last=Date.parse(state.cursor.lastRecentCheck||'')||0;
-    if(Date.now()-last>15*60000 && !state.cursor.queue.some(t=>t.category===recentCat&&t.token==='')){
+    if(Date.now()-last>5*60000 && !state.cursor.queue.some(t=>t.category===recentCat)){
       state.cursor.queue.unshift({category:recentCat,year:freshYear,token:''});
       state.cursor.lastRecentCheck=new Date().toISOString();
     }
@@ -178,7 +178,7 @@ async function continuousScan(){
 }
 function scheduleNext(){
  if(!ready||busy||Date.now()<pauseUntil)return;
- if(!state.cursor.queue.length&&state.cursor.lastCycle&&Date.now()-new Date(state.cursor.lastCycle).getTime()<15*60000)return;
+ if(!state.cursor.queue.length&&state.cursor.lastCycle&&Date.now()-new Date(state.cursor.lastCycle).getTime()<5*60000)return;
  continuousScan().catch(e=>console.error('collector failure:',e));
 }
 const failed=new Map();
@@ -199,6 +199,14 @@ app.get('/api/status',guard,(req,res)=>{
  res.json({...status,total:state.items.length,storage:store,unresolved,completion,cursor:{year:state.cursor.queue?.[0]?.year||null,pendingCategories:pending,completedCategories:state.cursor.completed||0,lastCycle:state.cursor.lastCycle||null,lastRecentCheck:state.cursor.lastRecentCheck||null},updated:state.updated,storageError,persistent});
 });
 app.post('/api/scan',guard,(req,res)=>{if(!ready)return res.status(503).json({error:storageError||'영구 저장소 연결 필요'});pauseUntil=0;scheduleNext();res.json({ok:true,running:busy})});
+app.post('/api/cron-scan',(req,res)=>{
+ const token=process.env.CRON_SECRET;
+ const presented=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
+ if(!token||token.length<32||!eq(presented,token))return res.status(403).json({error:'인증 실패'});
+ if(!ready)return res.status(503).json({error:storageError||'R2 저장소 연결 필요'});
+ scheduleNext();
+ res.json({ok:true,running:busy});
+});
 const uploader=multer({storage:multer.memoryStorage(),limits:{fileSize:40*1024*1024,files:10}});
 app.post('/api/upload',guard,uploader.array('files',10),wrap(async(req,res)=>{
  if(!ready)return res.status(503).json({error:storageError||'영구 저장소 연결 필요'});
