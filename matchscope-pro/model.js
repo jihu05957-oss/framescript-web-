@@ -61,7 +61,7 @@ function model(game,history=[],context={}){
    isFinished:game.status==='final',modelVersion:'1.2.0'
   };
  }
- const prior=PRIOR[game.league]||[base.home,base.away],neutral=(prior[0]+prior[1])/2;
+ const prior=international?[1.3,1.3]:(PRIOR[game.league]||[base.home,base.away]),neutral=(prior[0]+prior[1])/2;
  const hw=h.count/(h.count+6),aw=a.count/(a.count+6);
  const hOff=neutral*(1-hw)+(h.scored??neutral)*hw;
  const hDef=neutral*(1-hw)+(h.conceded??neutral)*hw;
@@ -71,7 +71,7 @@ function model(game,history=[],context={}){
  let expA=clamp(prior[1]*(aOff+hDef)/(2*neutral),prior[1]*.5,prior[1]*1.7);
  if(international&&hasElo){
   // Home designation is not evidence of home venue; apply no extra venue boost.
-  const ratingDifference=clamp((strength.homeRating-strength.awayRating)/650,-0.55,0.55);
+  const ratingDifference=clamp((strength.homeRating-strength.awayRating)/550,-0.55,0.55);
   expH*=Math.exp(ratingDifference);expA*=Math.exp(-ratingDifference);
  }
  const dist=distribution(expH,expA,sport,base.sd);
@@ -89,6 +89,7 @@ function model(game,history=[],context={}){
   game.home.name+' 최근 '+h.count+'경기 '+h.w+'승 '+h.d+'무 '+h.l+'패, 평균 득점 '+(h.scored??0).toFixed(1)+' / 실점 '+(h.conceded??0).toFixed(1)+'입니다.',
   game.away.name+' 최근 '+a.count+'경기 '+a.w+'승 '+a.d+'무 '+a.l+'패, 평균 득점 '+(a.scored??0).toFixed(1)+' / 실점 '+(a.conceded??0).toFixed(1)+'입니다.'
  ]:['최근 전적을 확보하지 못해 리그 평균 득점과 기본 홈 어드밴티지에 따른 추정치입니다.'];
+ if(international&&hasElo)explanation.push('경기 정보의 홈·원정 표기만으로 실제 홈구장 이점을 단정하지 않아, 국가대표 친선경기에는 기본 홈 가산점을 적용하지 않았습니다.');
  if(international&&hasElo)explanation.push('최근 공개 A매치 결과로 계산한 자체 Elo 지표: '+game.home.name+' '+strength.homeRating+'점, '+game.away.name+' '+strength.awayRating+'점입니다. 이는 공식 FIFA 랭킹이 아니며 실력을 완벽하게 나타내지 않습니다.');
  explanation.push('추정 기대 득점은 홈 '+expH.toFixed(2)+', 원정 '+expA.toFixed(2)+'입니다. '+(sport==='basketball'?'정규분포 근사':'포아송 분포')+'로 점수 분포를 계산했습니다.');
  explanation.push('가장 높은 모델 확률은 '+choices[0].label+' '+(choices[0].prob*100).toFixed(1)+'%입니다. 수익을 보장하거나 특정 베팅을 권유하는 수치는 아닙니다.');
