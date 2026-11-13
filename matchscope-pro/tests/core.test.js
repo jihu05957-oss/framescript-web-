@@ -65,6 +65,6 @@ test('Team data and validation tabs include explicit missing-data handling',asyn
   assert.ok(html.includes('function renderForm('));
   assert.ok(html.includes('function renderSources('));
   assert.ok(html.includes('경기력 자료가 부족해 예측을 보류'));
-  assert.ok(html.includes('승부 예측 보류'));
+  assert.ok(html.includes('승부 예측은 자료 부족으로 보류'));
  }finally{await new Promise(ok=>server.close(ok))}
 });
