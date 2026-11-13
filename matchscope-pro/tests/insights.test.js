@@ -25,7 +25,7 @@ test('Injured players are weighted only by identified team contribution, never i
  assert.equal(x[0].availability,'결장');assert.equal(x[0].importanceVerified,true);
  assert.equal(x[1].importanceVerified,false);
  assert.match(x[1].impact,/미확인/);
- assert.equal(statusRank('Questionable'),'출전 불확실');
+ assert.equal(statusRank('Questionable'),'출전 불확실');assert.equal(statusRank('결장'),'결장');
 });
 test('Deep report includes concrete injury/schedule and visibly flags unknown media and rotation motive',()=>{
  const g=fixture(),h=[entry('2026-11-12T12:00:00Z','final','100','x')];
