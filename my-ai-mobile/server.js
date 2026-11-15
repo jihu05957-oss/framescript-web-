@@ -5,10 +5,10 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const PORT = Number(process.env.PORT || 3000);
 const PASSWORD = process.env.APP_PASSWORD || '';
-const API_KEY = process.env.OPENAI_API_KEY || '';
+const API_KEY = process.env.GEMINI_API_KEY || '';
 const SECRET = process.env.SESSION_SECRET || '';
 const ROOT = path.join(__dirname, 'public');
-const MODELS = new Set(['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra']);
+const MODELS = new Set(['gemini-2.5-flash', 'gemini-2.5-flash-lite']);
 const tries = new Map();
 const respond = (res, code, obj) => {
   res.writeHead(code, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
@@ -38,24 +38,23 @@ function urlSafe(value) {
   try { const url = new URL(value); return ['https:','http:'].includes(url.protocol) ? url.href : ''; } catch {return '';}
 }
 function collect(result) {
-  const output = Array.isArray(result.output) ? result.output : [];
-  const searched = output.some(x=>x.type==='web_search_call' && (x.action?.type==='search' || x.action?.queries?.length || x.action?.query));
-  const seen = new Set(); const sources=[];
-  const add=(url,title)=>{
-    const link=urlSafe(url);
-    if (link && !seen.has(link)) { seen.add(link); sources.push({url:link,title:String(title||new URL(link).hostname).slice(0,180)}); }
-  };
-  const texts=[];
-  for (const item of output) {
-    if (item.type==='message') for (const section of item.content||[]) if (section.type==='output_text') {
-      texts.push(section.text||'');
-      for (const a of section.annotations||[]) if (a.type==='url_citation') add(a.url,a.title);
-    }
-    if (item.type==='web_search_call') for (const s of item.action?.sources||[]) {
-      if (typeof s==='string') add(s); else if (s) add(s.url||s.uri,s.title);
+  const candidate = result && Array.isArray(result.candidates) ? result.candidates[0] : null;
+  const parts = candidate?.content?.parts || [];
+  const answer = parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('\n').trim();
+  const grounding = candidate?.groundingMetadata || {};
+  const queries = Array.isArray(grounding.webSearchQueries) ? grounding.webSearchQueries.filter(Boolean) : [];
+  const chunks = Array.isArray(grounding.groundingChunks) ? grounding.groundingChunks : [];
+  const seen = new Set();
+  const sources = [];
+  for (const c of chunks) {
+    const uri = urlSafe(c?.web?.uri);
+    if (uri && !seen.has(uri)) {
+      seen.add(uri);
+      sources.push({url:uri,title:String(c.web.title || new URL(uri).hostname).slice(0,180)});
     }
   }
-  return {searched:Boolean(searched),answer:texts.join('\n').trim(),sources};
+  const searched = queries.length > 0 || chunks.some(c => c.web?.uri);
+  return {searched:Boolean(searched),answer,sources,queries:queries.slice(0,8)};
 }
 function serve(res, pathname) {
   const files = {'/':'index.html','/index.html':'index.html','/manifest.webmanifest':'manifest.webmanifest','/favicon.svg':'favicon.svg'};
@@ -71,48 +70,47 @@ function serve(res, pathname) {
 }
 async function chat(req,res) {
   if(!auth(req)) return respond(res,401,{error:'비밀번호로 로그인해 주세요.'});
-  if(!API_KEY) return respond(res,503,{error:'API 키가 아직 연결되지 않았습니다. Render 환경변수 OPENAI_API_KEY를 등록해 주세요.'});
+  if(!API_KEY) return respond(res,503,{error:'무료 Gemini API 키를 연결해야 합니다. Google AI Studio에서 무료 등급 키를 만든 뒤 Render 환경변수 GEMINI_API_KEY로 등록하세요.'});
   let body;
   try {body=await readJSON(req);}catch{return respond(res,400,{error:'질문 데이터가 올바르지 않습니다.'});}
-  const messages=body.messages, model=body.model||'gpt-6-luna';
+  const messages=body.messages, model=body.model||'gemini-2.5-flash';
   if(!Array.isArray(messages)||!messages.length||messages.length>35||!MODELS.has(model)||
     messages.some(x=>!['user','assistant'].includes(x.role)||typeof x.content!=='string'||!x.content.trim()||x.content.length>12000)||
     messages.at(-1).role!=='user') return respond(res,400,{error:'질문 형식을 확인해 주세요.'});
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),170000);
+  const timer=setTimeout(()=>controller.abort(),110000);
+  req.on('aborted',()=>controller.abort());
   try {
-    const upstream=await fetch('https://api.openai.com/v1/responses',{
+    const upstream=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
       method:'POST',
-      headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_KEY},
+      headers:{'Content-Type':'application/json','x-goog-api-key':API_KEY},
       body:JSON.stringify({
-        model,
-        instructions:'너는 한국어 개인 웹 리서치 AI다. 모든 질문마다 검색을 실제로 실행하라. 국내외 공개 웹에서 공식 자료와 최신 자료를 우선 조사하고 중요 주장을 교차 검증하라. 질문에 충실하고 자세히 대답하되 비공개·차단·미확인 정보를 찾았다고 주장하지 마라. 중요한 사실의 근거를 인용하고 정확한 날짜를 표시하라. 사용자의 질문이 한국어면 한국어로 답하라.',
-        input:messages,
-        tools:[{type:'web_search',search_context_size:'high'}],
-        tool_choice:'required',
-        include:['web_search_call.action.sources'],
-        store:false,
-        max_output_tokens:6000
+        contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),
+        systemInstruction:{parts:[{text:'너는 한국어 개인 웹 리서치 AI다. 사용자가 무엇을 질문하든 Google Search 검색 도구로 실제 공개 웹 자료를 조사해 한국어로 답해라. 검색 결과는 공식 출처와 최신 자료를 우선하여 확인하고, 여러 자료의 차이가 있으면 구분해 설명하라. 출처 없는 중요한 사실을 단정하지 말고, 검색하지 않은 정보를 검색했다고 주장하지 마라. 인터넷 전체 자료에 접근할 수 있다고 주장하지 마라. 정확한 날짜와 근거를 제시하라.'}]},
+        tools:[{google_search:{}}],
+        generationConfig:{maxOutputTokens:8192,temperature:0.45}
       }),signal:controller.signal
     });
     if(!upstream.ok) {
       const e=await upstream.json().catch(()=>({}));
-      return respond(res,upstream.status===429?429:502,{error:String(e?.error?.message||'검색 API 응답 오류 ('+upstream.status+')').slice(0,350)});
+      if(upstream.status===429) return respond(res,429,{error:'Gemini 무료 사용 한도에 도달했습니다. 무료 할당량이 갱신된 후 다시 질문해 주세요.'});
+      if(upstream.status===400 && /api key|api_key|key not valid/i.test(String(e?.error?.message||''))) return respond(res,400,{error:'Gemini API 키가 유효하지 않습니다. Google AI Studio의 무료 키를 확인해 주세요.'});
+      return respond(res,502,{error:String(e?.error?.message||'Gemini 검색 연결 오류 ('+upstream.status+')').slice(0,350)});
     }
     const raw=await upstream.json();
     const data=collect(raw);
-    if(!data.searched) return respond(res,502,{error:'실제 웹 검색 수행을 확인할 수 없어 답변을 표시하지 않았습니다.'});
-    if(!data.answer) return respond(res,502,{error:'검색했지만 답변이 비어 있습니다.'});
+    if(!data.searched) return respond(res,502,{error:'Google 검색 결과가 확인되지 않아 답변을 표시하지 않았습니다. 질문을 조금 더 구체적으로 바꿔 다시 시도해 주세요.'});
+    if(!data.answer) return respond(res,502,{error:'검색은 진행됐지만 AI 답변이 비어 있습니다. 다시 시도해 주세요.'});
     return respond(res,200,{...data,model});
   } catch(e) {
-    return respond(res,502,{error:e.name==='AbortError'?'검색 제한 시간에 도달했습니다. 다시 시도해 주세요.':'AI 서버에 연결하지 못했습니다.'});
+    return respond(res,502,{error:e.name==='AbortError'?'검색 시간 제한에 도달했습니다. 다시 시도해 주세요.':'Gemini 무료 API 서버에 연결하지 못했습니다.'});
   } finally {clearTimeout(timer);}
 }
 const app = http.createServer(async(req,res)=>{
   res.setHeader('X-Frame-Options','DENY');
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','no-referrer');
-  if(req.method==='GET' && req.url==='/api/status') return respond(res,200,{configured:Boolean(API_KEY),loginEnabled:Boolean(PASSWORD&&SECRET),authenticated:auth(req),webSearch:true});
+  if(req.method==='GET' && req.url==='/api/status') return respond(res,200,{configured:Boolean(API_KEY),loginEnabled:Boolean(PASSWORD&&SECRET),authenticated:auth(req),webSearch:true,provider:'Gemini Free',freeModel:true});
   if(req.method==='GET') return serve(res,new URL(req.url,'http://localhost').pathname);
   if(req.method!=='POST' || !allowOrigin(req)) return respond(res,403,{error:'허용되지 않는 요청'});
   if(req.url==='/api/login') {
