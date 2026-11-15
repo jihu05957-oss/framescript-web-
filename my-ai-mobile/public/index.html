@@ -15,9 +15,9 @@
 <div id="app">
 <aside class="side" id="side"><div class="brand"><span class="brand-mark">✦</span> My AI</div><button class="ghost" id="new">＋ 새 대화</button><div class="side-title">내 대화 목록</div><nav class="list" id="list"></nav><div class="side-bottom"><button id="export">↧ 대화 기록 내보내기</button><button id="logout">⇥ 잠금</button></div></aside>
 <div class="scrim" id="scrim"></div>
-<main class="main"><header class="top"><div class="top-inner"><button class="icon mobile-menu" id="menu" aria-label="메뉴 열기">☰</button><div><h1>My AI</h1><small>매 질문 인터넷 검색 · 출처 검증</small></div></div><span class="online" id="status">● 연결 확인 중</span></header><div class="setup-banner" hidden id="setup">API 연결 대기 중 · Render에서 OPENAI_API_KEY를 설정하세요.</div>
+<main class="main"><header class="top"><div class="top-inner"><button class="icon mobile-menu" id="menu" aria-label="메뉴 열기">☰</button><div><h1>My AI</h1><small>매 질문 인터넷 검색 · 출처 검증</small></div></div><span class="online" id="status">● 연결 확인 중</span></header><div class="setup-banner" hidden id="setup">무료 Gemini 연결 대기 중 · Google AI Studio에서 무료 API 키를 만들고 Render에 GEMINI_API_KEY를 등록하세요.</div>
 <section class="scroll" id="scroll"><div class="thread" id="thread"></div></section>
-<footer class="footer"><div class="footer-inner"><div class="progress" id="progress">⌕ 모든 질문에 인터넷 검색 자동 실행</div><form id="form" class="composer"><textarea id="prompt" rows="1" placeholder="무엇이든 질문해 주세요..." maxlength="12000" aria-label="질문 입력"></textarea><div class="composer-bottom"><select id="model" class="model" aria-label="AI 모델"><option value="gpt-6-luna">✦ Luna · 빠르고 경제적</option><option value="gpt-6.1-sol">✦ Sol · 깊은 분석</option><option value="gpt-6-astra">✦ Astra · 전문가 고비용</option></select><button class="send" type="submit" id="send" aria-label="전송">↑</button></div></form><p class="fineprint">검색 가능한 공개 자료를 분석합니다. 중요 정보는 원문 출처도 확인하세요.</p></div></footer>
+<footer class="footer"><div class="footer-inner"><div class="progress" id="progress">⌕ 모든 질문에 인터넷 검색 자동 실행</div><form id="form" class="composer"><textarea id="prompt" rows="1" placeholder="무엇이든 질문해 주세요..." maxlength="12000" aria-label="질문 입력"></textarea><div class="composer-bottom"><select id="model" class="model" aria-label="AI 모델"><option value="gemini-2.5-flash">✦ Gemini Flash · 무료</option><option value="gemini-2.5-flash-lite">✦ Gemini Flash-Lite · 무료</option></select><button class="send" type="submit" id="send" aria-label="전송">↑</button></div></form><p class="fineprint">Gemini 무료 등급 기준 · 사용량 제한 있음 · Google 검색이 실행된 답변만 표시 · 중요 정보는 원문 확인</p></div></footer>
 </main></div>
 <div class="login-cover" id="login"><div class="login-card"><div class="brand-mark" style="margin:auto;width:53px;height:53px;font-size:28px">✦</div><h2>My AI 잠금 해제</h2><p>비밀번호를 입력하면 개인 AI에 접속할 수 있습니다.</p><form id="loginform"><input id="password" type="password" placeholder="개인 비밀번호" autocomplete="current-password" required><button class="primary" type="submit">접속하기</button><div class="error" id="loginerror" role="alert"></div></form></div></div>
 <script>
@@ -25,7 +25,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const KEY='my_ai_mobile_research_v1';
-const fresh=()=>({active:null,chats:[],model:'gpt-6-luna'});
+const fresh=()=>({active:null,chats:[],model:'gemini-2.5-flash'});
 let state=fresh();try{const old=JSON.parse(localStorage.getItem(KEY));if(old&&Array.isArray(old.chats))state=Object.assign(fresh(),old);}catch{}
 let busy=false;
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(state));}catch{}};
@@ -43,14 +43,14 @@ function render(){renderList();const t=$('thread');t.replaceChildren();const c=a
 function scrollDown(){$('scroll').scrollTop=$('scroll').scrollHeight;}
 function resize(){const el=$('prompt');el.style.height='auto';el.style.height=Math.min(el.scrollHeight,140)+'px';}
 function setBusy(v){busy=v;$('send').disabled=v;$('prompt').disabled=v;$('model').disabled=v;$('send').textContent=v?'…':'↑';}
-async function status(){try{const r=await fetch('/api/status',{cache:'no-store'});const s=await r.json();$('status').textContent=s.configured?'● 웹 검색 준비':'● API 연결 필요';$('status').classList.toggle('off',!s.configured);$('setup').hidden=s.configured;$('login').hidden=s.authenticated;if(!s.loginEnabled)$('loginerror').textContent='서버 비밀번호 설정이 필요합니다.';}catch{$('status').textContent='● 서버 연결 실패';}}
+async function status(){try{const r=await fetch('/api/status',{cache:'no-store'});const s=await r.json();$('status').textContent=s.configured?'● 웹 검색 준비':'● 무료 API 연결 필요';$('status').classList.toggle('off',!s.configured);$('setup').hidden=s.configured;$('login').hidden=s.authenticated;if(!s.loginEnabled)$('loginerror').textContent='서버 비밀번호 설정이 필요합니다.';}catch{$('status').textContent='● 서버 연결 실패';}}
 async function sendMessage(){const prompt=$('prompt').value.trim();if(!prompt||busy)return;if(!$('login').hidden){$('loginerror').textContent='로그인 후 질문할 수 있습니다.';return;}const c=getChat();c.messages.push({role:'user',content:prompt});if(c.title==='새 대화')c.title=prompt.slice(0,40);$('prompt').value='';resize();state.model=$('model').value;save();render();setBusy(true);$('progress').textContent='⌕ 인터넷 검색 및 출처 비교 중입니다…';
 try{const messages=c.messages.slice(-35).map(m=>({role:m.role,content:m.content}));const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,model:state.model}),credentials:'same-origin'});const data=await r.json();if(!r.ok)throw Error(data.error||'AI 서버 오류');if(!data.searched)throw Error('웹 검색이 확인되지 않았습니다.');c.messages.push({role:'assistant',content:data.answer,sources:data.sources,searched:true});}
 catch(e){c.messages.push({role:'assistant',content:'오류: '+e.message,searched:false});}
 finally{setBusy(false);$('progress').textContent='⌕ 모든 질문에 인터넷 검색 자동 실행';save();render();$('prompt').focus();}}
 $('form').onsubmit=e=>{e.preventDefault();sendMessage();};$('prompt').addEventListener('input',resize);$('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 $('new').onclick=newChat;$('menu').onclick=openMenu;$('scrim').onclick=closeMenu;
-$('model').value=['gpt-6-luna','gpt-6.1-sol','gpt-6-astra'].includes(state.model)?state.model:'gpt-6-luna';$('model').onchange=()=>{state.model=$('model').value;save();};
+$('model').value=['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-flash'].includes(state.model)?state.model:'gemini-2.5-flash';$('model').onchange=()=>{state.model=$('model').value;save();};
 $('loginform').onsubmit=async e=>{e.preventDefault();$('loginerror').textContent='';try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('password').value})});const j=await r.json();if(!r.ok)throw Error(j.error||'로그인 실패');$('login').hidden=true;$('password').value='';$('prompt').focus();}catch(e){ $('loginerror').textContent=e.message;}};
 $('logout').onclick=async()=>{closeMenu();await fetch('/api/logout',{method:'POST'}).catch(()=>{});$('login').hidden=false;};
 $('export').onclick=()=>{const json=JSON.stringify({date:new Date().toISOString(),chats:state.chats},null,2);const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='my-ai-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);};
