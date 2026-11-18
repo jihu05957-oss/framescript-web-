@@ -61,7 +61,7 @@
   function direct(s,spec){unload(s);s.url=spec.url;s.name.textContent=new URL(spec.url).hostname;s.name.title=s.name.textContent;s.tile.classList.add('loaded');s.v.muted=true;s.v.loop=true;s.v.src=spec.url;s.v.load();auto=true;start(s,true);sync()}
   function addLinks(){
     const lines=linkInput.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);let n=0,errors=[];const before=slots.filter(s=>s.url).length;
-    for(const line of lines){let spec;try{spec=parseLink(line)}catch(e){errors.push(e.message);continue}const i=slots.findIndex(s=>!s.url);if(i<0){errors.push('최대 8개까지 추가할 수 있습니다.');break}changeCount(Math.max(count,i+1));if(spec.kind==='youtube')youtube(slots[i],spec);else direct(slots[i],spec);n++}
+    for(const line of lines){let spec;try{spec=parseLink(line)}catch(e){errors.push(e.message);continue}const i=slots.findIndex(s=>!s.url);if(i<0){errors.push('최대 14개까지 추가할 수 있습니다.');break}changeCount(Math.max(count,i+1));if(spec.kind==='youtube')youtube(slots[i],spec);else direct(slots[i],spec);n++}
     if(before===0&&n>0&&n<4&&slots.some(s=>s.remote))changeCount(n);
     message.textContent=(n?n+'개 추가. ':'')+errors.join(' ');if(n&&!errors.length){linkInput.value='';panel.hidden=true}if(!lines.length)message.textContent='영상 주소를 입력하세요.';layout();
   }
