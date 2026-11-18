@@ -33,8 +33,28 @@ html:fullscreen::backdrop{background:#000}
 body.theater{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important}
 body.theater .stage{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-height:0!important;max-height:none!important;margin:0!important;padding:0!important}
 body.theater .stage .tile{margin:0!important}
-#install[hidden]{display:none!important}html:fullscreen{background:#000} @media(display-mode:fullscreen){html,body{background:#000}body{height:100dvh}#install{display:none!important}} @media(display-mode:standalone){#install{display:none!important}}</style></head><body>
-<header class="bar"><div class="brand"><span>◉</span> OctoPlay</div><button id="install" title="홈 화면에 설치">앱 설치</button><button id="add" class="primary">＋ 영상 추가</button><label class="count">화면 <select id="count" aria-label="화면 개수"></select></label><div class="tools"><button id="play">▶ 전체 재생</button><button id="pause">Ⅱ 정지</button><button id="mute">🔇 전체 음소거</button><button id="fit">꽉 채움</button><button id="clean">컨트롤 표시</button><button id="full" title="전체 화면: 3번 연속 터치 소리 전환 / 1초 길게 터치 종료">⛶ 전체 화면</button><button id="clear">비우기</button></div></header>
+#install[hidden]{display:none!important}html:fullscreen{background:#000} @media(display-mode:fullscreen){html,body{background:#000}body{height:100dvh}#install{display:none!important}} @media(display-mode:standalone){#install{display:none!important}}</style><style>
+#add-link{background:#242a39}
+.link-panel{flex-shrink:0;padding:8px 12px;background:#171b26;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.link-panel[hidden],.linksmall[hidden]{display:none!important}
+.link-panel textarea{flex:1 1 100%;resize:vertical;max-height:105px;min-height:52px;padding:8px;background:#10131c;border:1px solid #394154;border-radius:8px;font:inherit;color:#edf0fb}
+#link-message{flex:1;font-size:11px;color:#ffd0a8}
+.tile.link-youtube{display:flex;flex-direction:column;align-items:stretch;justify-content:stretch}
+.tile.link-youtube[hidden]{display:none!important}
+.tile.link-youtube>video,.tile.link-youtube>.top,.tile.link-youtube>.bottom,.tile.link-youtube>.empty{display:none!important}
+.linkbar{height:32px;flex:0 0 32px;display:flex;gap:4px;align-items:center;background:#171b26;padding:2px 5px}
+.linkbar>span{flex:1;min-width:0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.linkpane{position:relative;flex:1;min-height:0;min-width:0;background:#000}
+.linkpane iframe{position:absolute;inset:0;display:block;width:100%;height:100%;border:0}
+.linksmall{height:100%;width:100%;white-space:normal;background:#171b26;border:0;border-radius:0;font-size:12px;color:#d9dfff}
+#embed-controls{display:none}
+body.theater .link-panel,body.theater .linkbar{display:none!important}
+body.theater.has-youtube #embed-controls{display:flex;align-items:center;justify-content:center;gap:5px;height:36px;position:absolute;left:0;top:0;right:0;background:#10131c}
+body.theater.has-youtube #embed-controls button{min-height:30px;font-size:12px;padding:4px 10px}
+body.theater.has-youtube .stage{top:36px!important;height:calc(100% - 36px)!important;bottom:0!important}
+body.has-youtube .toast{display:none!important}
+</style><meta name="referrer" content="strict-origin-when-cross-origin"></head><body>
+<header class="bar"><div class="brand"><span>◉</span> OctoPlay</div><button id="install" title="홈 화면에 설치">앱 설치</button><button id="add" class="primary">＋ 영상 추가</button><button id="add-link">＋ 링크 추가</button><label class="count">화면 <select id="count" aria-label="화면 개수"></select></label><div class="tools"><button id="play">▶ 전체 재생</button><button id="pause">Ⅱ 정지</button><button id="mute">🔇 전체 음소거</button><button id="fit">꽉 채움</button><button id="clean">컨트롤 표시</button><button id="full" title="전체 화면: 3번 연속 터치 소리 전환 / 1초 길게 터치 종료">⛶ 전체 화면</button><button id="clear">비우기</button></div></header><section id="link-panel" class="link-panel" hidden><textarea id="link-input" aria-label="영상 주소" placeholder="유튜브 또는 MP4·WebM 직접 주소 (한 줄에 하나씩)"></textarea><button id="link-submit" class="primary">추가</button><button id="link-close">닫기</button><span id="link-message" role="status">유튜브는 각 플레이어에서 직접 재생하세요. 일반 사이트는 직접 영상 주소만 지원합니다.</span></section><nav id="embed-controls" aria-label="외부 플레이어 전체화면 조작"><button id="embed-mute">전체 소리 전환</button><button id="embed-pause">전체 정지</button><button id="embed-exit">나가기</button></nav>
 <div class="info"><span id="status" role="status">파일은 기기에서만 재생되며 서버로 전송되지 않습니다.</span><span>∞ 반복 재생 · 최대 8개</span></div>
 <main id="stage" class="stage clean cover" aria-label="동영상 분할 화면"></main><button class="exit" id="exit">전체 화면 나가기</button><input id="files" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" multiple hidden><input id="single" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" hidden><div class="toast" id="toast" role="status" hidden></div>
 <script>
@@ -99,4 +119,4 @@ function updateInstall(){ $('install').hidden=installed(); }
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e;updateInstall()});
 $('install').onclick=async()=>{if(installEvent){const prompt=installEvent;installEvent=null;try{await prompt.prompt();await prompt.userChoice}catch(e){}updateInstall()}else if(!installed()){alert('크롬 또는 엣지에서 이 주소를 열고 메뉴(⋮) → 홈 화면에 추가 또는 앱 설치를 선택하세요.')}};window.addEventListener('appinstalled',()=>{installEvent=null;$('install').hidden=true});updateInstall();
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).catch(e=>console.warn('PWA registration:',e)));
-</script></body></html>
+</script><script src="/links.js"></script></body></html>
