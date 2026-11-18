@@ -7,7 +7,7 @@ const types={'.html':'text/html','.js':'text/javascript','.webmanifest':'applica
 const server=http.createServer((req,res)=>{const p=new URL(req.url,'http://localhost').pathname;const f=path.join(dir,p==='/'?'index.html':p);if(!f.startsWith(dir+path.sep)||!fs.existsSync(f)){res.writeHead(404);return res.end()}res.writeHead(200,{'Content-Type':types[path.extname(f)]||'application/octet-stream','Referrer-Policy':'strict-origin-when-cross-origin'});res.end(fs.readFileSync(f))});
 
 
-const fakeScript="window.YT={Player:class{constructor(frame,opts){this.frame=frame;this.opts=opts;this.m=false;this.state=-1;this.t=0;setTimeout(()=>opts.events.onReady({target:this}),20)}getCurrentTime(){return this.t}getDuration(){return 30}getPlayerState(){return this.state}isMuted(){return this.m}mute(){this.m=true}unMute(){this.m=false}pauseVideo(){this.state=2}seekTo(t){this.t=t}destroy(){this.frame.remove()}}};window.onYouTubeIframeAPIReady();";
+const fakeScript="window.YT={Player:class{constructor(frame,opts){this.frame=frame;this.opts=opts;this.m=false;this.state=-1;this.t=0;setTimeout(()=>opts.events.onReady({target:this}),20)}getCurrentTime(){return this.t}getDuration(){return 30}getPlayerState(){return this.state}isMuted(){return this.m}mute(){this.m=true}unMute(){this.m=false}playVideo(){this.state=1;this.opts.events.onStateChange({data:1})}pauseVideo(){this.state=2;this.opts.events.onStateChange({data:2})}seekTo(t){this.t=t}destroy(){this.frame.remove()}}};window.onYouTubeIframeAPIReady();";
 async function add(page,links){await page.locator('#add-link').click();await page.locator('#link-input').fill(links);await page.locator('#link-submit').click()}
 async function clear(page){page.once('dialog',d=>d.accept());await page.locator('#clear').click();await page.waitForFunction(()=>slots.every(s=>!s.url))}
 async function mockRoutes(page){await page.route('https://media.example/**',route=>route.fulfill({status:200,contentType:'video/webm',body:buffer,headers:{'Access-Control-Allow-Origin':'*'}}));await page.route('https://www.youtube.com/embed/**',route=>route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><title>Mock iframe</title><button>Play</button>'}));await page.route('https://www.youtube.com/iframe_api',route=>route.fulfill({status:200,contentType:'text/javascript',body:fakeScript}))}
@@ -29,7 +29,7 @@ await check('YouTube URL variants, native embed, size limits and manual playback
  const page=await browser.newPage({viewport:{width:1280,height:900},serviceWorkers:'block'});await mockRoutes(page);await page.goto(url);
  await add(page,'https://youtu.be/M7lc1UVf-VE\nhttps://www.youtube.com/watch?v=M7lc1UVf-VE\nhttps://www.youtube.com/shorts/M7lc1UVf-VE');
  await page.waitForFunction(()=>slots.slice(0,3).every(s=>s.remote?.ready));assert.equal(await page.locator('iframe').count(),3);for(const src of await page.locator('iframe').evaluateAll(a=>a.map(x=>x.src))){const u=new URL(src);assert.equal(u.host,'www.youtube.com');assert.equal(u.searchParams.get('autoplay'),'0');assert.equal(u.searchParams.get('loop'),'1')}
- await page.locator('#play').click();assert.equal(await page.evaluate(()=>slots.slice(0,3).every(s=>s.v.paused)),true);await page.locator('#mute').click();assert.equal(await page.evaluate(()=>slots.slice(0,3).every(s=>!s.v.muted)),true);
+ await page.locator('#play').click();assert.equal(await page.evaluate(()=>slots.slice(0,3).every(s=>s.v.paused)),true);await page.locator('.linkbar').first().getByRole('button',{name:'유튜브 재생 또는 정지'}).click();assert.equal(await page.evaluate(()=>slots[0].v.paused),false);assert.equal(await page.evaluate(()=>slots[1].v.paused),true);await page.locator('#mute').click();assert.equal(await page.evaluate(()=>slots.slice(0,3).every(s=>!s.v.muted)),true);
  await page.locator('#full').click();await page.waitForFunction(()=>document.body.classList.contains('theater'));assert.equal(await page.locator('#embed-controls').isVisible(),true);assert.equal(await page.locator('.linkbar').first().isVisible(),false);await page.locator('#embed-exit').click();await page.waitForFunction(()=>!document.body.classList.contains('theater'));await clear(page);assert.equal(await page.locator('iframe').count(),0);await page.close();
  const mobile=await browser.newPage({viewport:{width:384,height:832},isMobile:true,hasTouch:true,serviceWorkers:'block'});await mockRoutes(mobile);await mobile.goto(url);await add(mobile,'https://www.youtube.com/watch?v=M7lc1UVf-VE');await mobile.waitForFunction(()=>slots[0].remote?.ready);await mobile.locator('#count').selectOption('8');await mobile.waitForFunction(()=>!slots[0].remote.frame);await mobile.locator('.linksmall').first().click();await mobile.waitForFunction(()=>slots[0].remote?.ready);const box=await mobile.locator('iframe').boundingBox();assert.ok(box.width>=200&&box.height>=200);await mobile.close();
 });
@@ -40,7 +40,21 @@ await check('real external video playback (authorized CC0 sample)',async()=>{
  const page=await browser.newPage({viewport:{width:1280,height:900},serviceWorkers:'block'});await page.goto(url);await add(page,'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4');await page.waitForFunction(()=>slots[0].v.currentTime>0.3,{},{timeout:45000});await page.close();
 });
 await check('real official YouTube playback after user click',async()=>{
- const page=await browser.newPage({viewport:{width:1280,height:900},serviceWorkers:'block'});await page.goto(url);await add(page,'https://www.youtube.com/watch?v=M7lc1UVf-VE');await page.waitForFunction(()=>slots[0].remote?.ready,{},{timeout:35000});const play=page.frameLocator('.linkpane iframe').locator('button.ytp-large-play-button');await play.click({timeout:25000});await page.waitForFunction(()=>slots[0].remote?.player?.getCurrentTime()>0.3&&slots[0].remote?.player?.getPlayerState()===1,{},{timeout:35000});await page.close();
+ let results=[];
+ for(const id of ['M7lc1UVf-VE','YE7VzlLtp-4']){
+  const page=await browser.newPage({viewport:{width:1280,height:900},serviceWorkers:'block'});
+  try{
+   await page.goto(url);await add(page,'https://www.youtube.com/watch?v='+id);await page.waitForFunction(()=>slots[0].remote?.ready,{},{timeout:20000});
+   await page.locator('.linkbar').first().getByRole('button',{name:'유튜브 재생 또는 정지'}).click();
+   await page.waitForFunction(()=>slots[0].remote?.player?.getCurrentTime()>0.3&&slots[0].remote?.player?.getPlayerState()===1,{},{timeout:30000});
+   console.log('Real YouTube video played: '+id);await page.close();return;
+  }catch(e){
+   const data=await page.evaluate(()=>{const r=slots[0].remote;return {ready:r?.ready,error:r?.errorCode,state:r?.player?.getPlayerState?.(),time:r?.player?.getCurrentTime?.(),note:r?.note.textContent}}).catch(()=>null);
+   const frame=page.frames().find(f=>f.url().includes('youtube.com/embed/'));const visible=frame?await frame.locator('body').innerText({timeout:2000}).catch(()=>'<unavailable>'):'<no iframe>';
+   results.push(id+' '+JSON.stringify(data)+' '+visible.slice(0,700));await page.close()
+  }
+ }
+ throw Error(results.join('\n'));
 });
 }finally{await browser.close();server.close();fs.rmSync(temp,{recursive:true,force:true})}
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}
