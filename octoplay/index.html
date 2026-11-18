@@ -5,25 +5,41 @@
 @media(max-width:650px) and (orientation:portrait){.bar{padding:7px 7px;gap:5px}.brand{font-size:15px}.bar .tools{width:100%}.bar button,.bar select{font-size:12px;min-height:33px;padding:6px 8px}.stage{gap:3px;padding:3px}.tile{border-radius:5px}.time{display:none}.tile .action{min-width:25px;min-height:25px;padding:2px 4px}.top,.bottom{padding:3px;gap:2px}.info{padding:4px 7px;font-size:10px}}
 @media(max-height:480px) and (orientation:landscape){.bar{padding:4px 6px;gap:4px;flex-wrap:nowrap}.brand{font-size:13px}.bar button,.bar select{padding:4px 6px;min-height:28px;font-size:11px}.info{display:none}.stage{gap:3px;padding:3px}.tile .action{min-height:22px;min-width:22px;font-size:11px}.top,.bottom{padding:2px}.time{display:none}.top .name{font-size:10px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Borderless video wall; individual overlays appear only on demand. */
+.stage{gap:0;padding:0;background:#000}
+.stage .tile{border:0;border-radius:0;background:#000}
+.stage .tile video{touch-action:manipulation}
+.stage.clean .tile .top,.stage.clean .tile .bottom{opacity:0;visibility:hidden;pointer-events:none}
+.stage.clean .tile.reveal .top,.stage.clean .tile.reveal .bottom,.stage.clean .tile.error .top,.stage.clean .tile.error .bottom{opacity:1;visibility:visible;pointer-events:auto}
+.stage.clean .tile .top:focus-within,.stage.clean .tile .bottom:focus-within{opacity:1;visibility:visible;pointer-events:auto}
+.stage.clean .tile .name{visibility:hidden}
+.stage.clean .tile.reveal .name,.stage.clean .tile.error .name{visibility:visible}
+.stage .empty{background:#10131c}
+.top,.bottom{gap:4px;padding:5px}
+.tile .action{min-height:30px;min-width:30px}
+@media(max-height:480px) and (orientation:landscape){.tile .action{min-height:25px;min-width:25px}}
 </style></head><body>
-<header class="bar"><div class="brand"><span>◉</span> OctoPlay</div><button id="add" class="primary">＋ 영상 추가</button><label class="count">화면 <select id="count" aria-label="화면 개수"></select></label><div class="tools"><button id="play">▶ 전체 재생</button><button id="pause">Ⅱ 정지</button><button id="mute">🔇 전체 음소거</button><button id="fit">맞춤</button><button id="clean">컨트롤 숨김</button><button id="full">⛶ 전체 화면</button><button id="clear">비우기</button></div></header>
+<header class="bar"><div class="brand"><span>◉</span> OctoPlay</div><button id="add" class="primary">＋ 영상 추가</button><label class="count">화면 <select id="count" aria-label="화면 개수"></select></label><div class="tools"><button id="play">▶ 전체 재생</button><button id="pause">Ⅱ 정지</button><button id="mute">🔇 전체 음소거</button><button id="fit">꽉 채움</button><button id="clean">컨트롤 표시</button><button id="full">⛶ 전체 화면</button><button id="clear">비우기</button></div></header>
 <div class="info"><span id="status" role="status">파일은 기기에서만 재생되며 서버로 전송되지 않습니다.</span><span>∞ 반복 재생 · 최대 8개</span></div>
-<main id="stage" class="stage" aria-label="동영상 분할 화면"></main><button class="exit" id="exit">전체 화면 나가기</button><input id="files" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" multiple hidden><input id="single" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" hidden><div class="toast" id="toast" role="status" hidden></div>
+<main id="stage" class="stage clean cover" aria-label="동영상 분할 화면"></main><button class="exit" id="exit">전체 화면 나가기</button><input id="files" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" multiple hidden><input id="single" type="file" accept="video/*,.mp4,.webm,.mov,.mkv,.m4v,.avi" hidden><div class="toast" id="toast" role="status" hidden></div>
 <script>
 'use strict';
-const $=id=>document.getElementById(id),stage=$('stage'),slots=[];let count=4,selected=0,auto=true,solo=-1,toastTimer,hiddenControls=false;
+const $=id=>document.getElementById(id),stage=$('stage'),slots=[];let count=4,selected=0,auto=true,solo=-1,toastTimer,hiddenControls=true;
+function hideOverlay(s){clearTimeout(s.overlayTimer);s.tile.classList.remove('reveal')}
+function revealOverlay(s){for(const other of slots)if(other!==s)hideOverlay(other);clearTimeout(s.overlayTimer);s.tile.classList.add('reveal');s.overlayTimer=setTimeout(()=>{if(s.seeking){revealOverlay(s);return}hideOverlay(s)},4500)}
 const fmt=t=>Number.isFinite(t)?Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0'):'0:00';
 function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,3500)}
 function action(parent,label,title,fn){const b=document.createElement('button');b.className='action';b.textContent=label;b.title=title;b.setAttribute('aria-label',title);b.addEventListener('click',e=>{e.stopPropagation();fn()});parent.append(b);return b}
 function setAudio(i){slots.forEach((s,j)=>{s.v.muted=j!==i||s.v.muted===false});sync()}
 function muteAll(){slots.forEach(s=>s.v.muted=true);sync()}
-function sync(){for(const s of slots){s.play.textContent=s.v.paused?'▶':'Ⅱ';s.audio.textContent=s.v.muted?'🔇':'🔊';s.audio.classList.toggle('audible',!s.v.muted);if(!s.seeking&&Number.isFinite(s.v.duration)&&s.v.duration>0)s.seek.value=s.v.currentTime/s.v.duration*1000;s.time.textContent=fmt(s.v.currentTime)+' / '+fmt(s.v.duration)}const n=slots.slice(0,count).filter(s=>s.url).length;$('status').textContent=n+' / '+count+'개 영상 · 기기 내 재생 · 자동 반복'}
+function sync(){for(const s of slots){s.play.textContent=s.v.paused?'▶':'Ⅱ';s.audio.textContent=s.v.muted?'🔇':'🔊';s.audio.classList.toggle('audible',!s.v.muted);if(!s.seeking&&Number.isFinite(s.v.duration)&&s.v.duration>0)s.seek.value=s.v.currentTime/s.v.duration*1000;s.time.textContent=fmt(s.v.currentTime)+' / '+fmt(s.v.duration)}const n=slots.slice(0,count).filter(s=>s.url).length;$('status').textContent=n+' / '+count+'개 영상 · 한 번 탭: 조작 / 두 번 탭: 확대'}
 async function start(s,quiet=false){if(!s.url||s.tile.hidden)return;try{await s.v.play()}catch(e){if(!quiet&&e.name!=='AbortError')toast('재생 버튼을 다시 누르거나 지원되는 영상 형식을 선택해 주세요.')}sync()}
 function layout(){const portrait=innerHeight>=innerWidth;const cols=count<=1?1:portrait?2:count<=4?2:count<=6?3:4;stage.style.setProperty('--cols',cols);stage.style.setProperty('--rows',Math.ceil(count/cols))}
 function changeCount(n){count=Math.max(1,Math.min(8,n));$('count').value=String(count);if(solo>=count)focus(-1);slots.forEach((s,i)=>{const was=s.tile.hidden;s.tile.hidden=i>=count;if(i>=count){s.v.pause();s.v.muted=true}else if(was&&auto&&s.url)start(s,true)});layout();sync()}
-function focus(i){solo=solo===i?-1:i;stage.classList.toggle('solo',solo>=0);slots.forEach((s,j)=>{s.tile.classList.toggle('focused',j===solo);s.full.textContent=j===solo?'↙':'⛶';s.full.title=j===solo?'분할 화면 복귀':'이 영상 확대'});if(hiddenControls&&solo>=0){hiddenControls=false;stage.classList.remove('clean');$('clean').textContent='컨트롤 숨김'}}
+function focus(i){solo=solo===i?-1:i;stage.classList.toggle('solo',solo>=0);slots.forEach((s,j)=>{s.tile.classList.toggle('focused',j===solo);s.full.textContent=j===solo?'↙':'⛶';s.full.title=j===solo?'분할 화면 복귀':'이 영상 확대'});slots.forEach(hideOverlay)}
 function choose(i){selected=i;$('single').value='';$('single').click()}
-function unload(s){s.v.pause();s.v.removeAttribute('src');s.v.load();if(s.url)URL.revokeObjectURL(s.url);s.url=null;s.tile.classList.remove('loaded','error');s.name.textContent='';s.seek.value=0;s.v.muted=true;sync()}
+function unload(s){hideOverlay(s);clearTimeout(s.tapTimer);clearTimeout(s.holdTimer);s.v.pause();s.v.removeAttribute('src');s.v.load();if(s.url)URL.revokeObjectURL(s.url);s.url=null;s.tile.classList.remove('loaded','error');s.name.textContent='';s.seek.value=0;s.v.muted=true;sync()}
 function load(s,file){if(!file)return;unload(s);s.url=URL.createObjectURL(file);s.name.textContent=file.name;s.name.title=file.name;s.tile.classList.add('loaded');s.v.muted=true;s.v.loop=true;s.v.src=s.url;s.v.load();auto=true;start(s,true);sync()}
 for(let i=0;i<8;i++){const option=document.createElement('option');option.value=i+1;option.textContent=i+1+'개';$('count').append(option);
 const tile=document.createElement('section');tile.className='tile';tile.setAttribute('aria-label',(i+1)+'번 영상');
@@ -36,10 +52,16 @@ const seek=document.createElement('input');seek.type='range';seek.min=0;seek.max
 const s={tile,v,url:null,name,play,audio,seek,time,full,seeking:false};slots.push(s);
 seek.addEventListener('input',()=>{s.seeking=true;if(Number.isFinite(v.duration)&&v.duration>0)v.currentTime=v.duration*Number(seek.value)/1000});seek.addEventListener('change',()=>{s.seeking=false;sync()});seek.addEventListener('pointercancel',()=>s.seeking=false);
 ['play','pause','timeupdate','loadedmetadata','volumechange','durationchange'].forEach(e=>v.addEventListener(e,sync));v.addEventListener('error',()=>{if(!s.url)return;tile.classList.add('error');name.textContent='재생 불가 · '+name.title;toast((i+1)+'번 영상: 이 브라우저에서 지원하지 않는 코덱일 수 있어요. MP4(H.264)를 권장합니다.')});
-v.addEventListener('ended',()=>{if(auto||v.loop){v.currentTime=0;start(s,true)}});v.onclick=()=>{if(hiddenControls){hiddenControls=false;stage.classList.remove('clean');$('clean').textContent='컨트롤 숨김'}else if(v.paused)start(s);else v.pause()};
+v.addEventListener('ended',()=>{if(auto||v.loop){v.currentTime=0;start(s,true)}});v.onclick=()=>{if(s.held){s.held=false;return}if(s.tapTimer){clearTimeout(s.tapTimer);s.tapTimer=null;focus(i);return}s.tapTimer=setTimeout(()=>{s.tapTimer=null;if(!hiddenControls){if(v.paused)start(s);else v.pause()}else if(tile.classList.contains('reveal'))hideOverlay(s);else revealOverlay(s)},260)};
+v.addEventListener('pointerdown',e=>{s.held=false;clearTimeout(s.holdTimer);if(e.button!==0)return;s.holdTimer=setTimeout(()=>{s.held=true;revealOverlay(s)},550)});
+for(const evt of ['pointerup','pointercancel','pointerleave','pointermove'])v.addEventListener(evt,()=>clearTimeout(s.holdTimer));
+v.addEventListener('contextmenu',e=>{e.preventDefault();revealOverlay(s)});
+for(const overlay of [top,bottom])overlay.addEventListener('pointerdown',()=>{if(hiddenControls)revealOverlay(s)});
+seek.addEventListener('change',()=>{if(hiddenControls)revealOverlay(s)});
+
 tile.addEventListener('dragover',e=>e.preventDefault());tile.addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files[0])load(s,e.dataTransfer.files[0])});stage.append(tile)}
 $('add').onclick=()=>{$('files').value='';$('files').click()};$('files').onchange=()=>{const fs=Array.from($('files').files);const available=slots.map((s,i)=>!s.url?i:-1).filter(i=>i>=0);if(!available.length){toast('빈 칸이 없습니다. 영상을 제거하거나 교체하세요.');return}let n=Math.min(available.length,fs.length);if(n){changeCount(Math.max(count,available[n-1]+1));for(let k=0;k<n;k++)load(slots[available[k]],fs[k])}if(fs.length>n)toast('최대 8개까지 추가할 수 있습니다. '+(fs.length-n)+'개는 추가되지 않았어요.')};$('single').onchange=()=>{if($('single').files[0])load(slots[selected],$('single').files[0])};
-$('count').onchange=e=>changeCount(Number(e.target.value));$('play').onclick=()=>{auto=true;slots.slice(0,count).forEach(s=>start(s));};$('pause').onclick=()=>{auto=false;slots.forEach(s=>s.v.pause());sync()};$('mute').onclick=()=>{muteAll();toast('모든 영상 음소거')};$('fit').onclick=()=>{stage.classList.toggle('cover');$('fit').textContent=stage.classList.contains('cover')?'채우기':'맞춤'};$('clean').onclick=()=>{hiddenControls=!hiddenControls;stage.classList.toggle('clean',hiddenControls);$('clean').textContent=hiddenControls?'컨트롤 표시':'컨트롤 숨김'};$('clear').onclick=()=>{if(slots.some(s=>s.url)&&confirm('모든 재생 목록을 비울까요? 원본 파일은 삭제되지 않습니다.')){slots.forEach(unload);focus(-1)}};
+$('count').onchange=e=>changeCount(Number(e.target.value));$('play').onclick=()=>{auto=true;slots.slice(0,count).forEach(s=>start(s));};$('pause').onclick=()=>{auto=false;slots.forEach(s=>s.v.pause());sync()};$('mute').onclick=()=>{muteAll();toast('모든 영상 음소거')};$('fit').onclick=()=>{stage.classList.toggle('cover');$('fit').textContent=stage.classList.contains('cover')?'꽉 채움':'원본 비율'};$('clean').onclick=()=>{hiddenControls=!hiddenControls;slots.forEach(hideOverlay);stage.classList.toggle('clean',hiddenControls);$('clean').textContent=hiddenControls?'컨트롤 표시':'컨트롤 숨김'};$('clear').onclick=()=>{if(slots.some(s=>s.url)&&confirm('모든 재생 목록을 비울까요? 원본 파일은 삭제되지 않습니다.')){slots.forEach(unload);focus(-1)}};
 async function exitFull(){if(document.fullscreenElement&&document.exitFullscreen)await document.exitFullscreen().catch(()=>{});document.body.classList.remove('theater');layout()}
 $('full').onclick=async()=>{if(document.fullscreenElement||document.body.classList.contains('theater')){await exitFull();return}document.body.classList.add('theater');try{if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen()}catch(e){}layout()};$('exit').onclick=exitFull;document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement)document.body.classList.remove('theater');layout()});
 window.addEventListener('resize',layout);window.addEventListener('pagehide',()=>{slots.forEach(s=>s.v.pause())});changeCount(4);
