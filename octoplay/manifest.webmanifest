@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "OctoPlay — 멀티 영상 플레이어",
+  "short_name": "OctoPlay",
+  "lang": "ko",
+  "description": "기기 내 동영상 멀티 플레이어",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": [
+    "fullscreen",
+    "standalone"
+  ],
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
