@@ -1,6 +1,6 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
-const {LEAGUES}=require('./leagues'),{listDay,findGame,detail,SOURCE_HEALTH,getJson}=require('./providers'),{model}=require('./model');
+const {LEAGUES}=require('./leagues'),{listDay,findGame,detail,SOURCE_HEALTH,getJson,normalizeESPN,kst}=require('./providers'),{model}=require('./model');
 const national=require('./national');
 const pipeline=require('./pipeline');
 const PORT=process.env.PORT||3000,ROOT=path.resolve(__dirname,'public');
@@ -95,13 +95,20 @@ if(require.main===module)server.listen(PORT,'0.0.0.0',()=>{
   }
  }).catch(e=>console.warn('National history dataset unavailable',String(e.message||e)));
 
- const checks=[
-  ['ESPN','https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=20261113&limit=10'],
-  ['TheSportsDB','https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=2026-11-13&l=4328']
- ];
- Promise.allSettled(checks.map(async ([name,url])=>{
-  try{const data=await getJson(url,60000);console.log('External provider check:',name,'connected',Array.isArray(data.events)?data.events.length:'n/a');}
-  catch(error){console.warn('External provider check:',name,'unavailable:',String(error.message||error));}
- }));
+ // Live end-to-end smoke checks use actual provider fixtures and exact team results, not synthetic data.
+ (async()=>{
+  const day=kst(new Date()),d=new Date(day+'T12:00:00Z');
+  for(const league of LEAGUES.filter(l=>['nba','epl','kleague1','j1'].includes(l.id))){
+   try{
+    const next=new Date(+d+3*86400000).toISOString().slice(0,10),root='https://site.api.espn.com/apis/site/v2/sports/'+league.sport+'/'+league.espn;
+    const response=await getJson(root+'/scoreboard?dates='+day.replace(/-/g,'')+'-'+next.replace(/-/g,'')+'&limit=100',240000);
+    const fixtures=(response.events||[]).map(e=>normalizeESPN(e,league)).filter(g=>g&&g.status==='scheduled'&&Date.parse(g.date)>Date.now());
+    const game=fixtures[0];if(!game){console.info('Live analysis check',JSON.stringify({league:league.id,fixture:'none found'}));continue;}
+    const facts=await detail(game),m=model(game,facts.history,{strength:facts.strength||null});
+    console.info('Live analysis check',JSON.stringify({league:league.id,home:game.home.name,away:game.away.name,date:game.date,history:facts.history.length,finished:facts.history.filter(x=>x.status==='final'&&Number.isFinite(x.home.score)&&Number.isFinite(x.away.score)).length,homeRecords:m.home.count,awayRecords:m.away.count,available:m.available,injuries:facts.extra.injuries?.length||0,errors:facts.errors}));
+   }catch(e){console.warn('Live analysis check error',league.id,String(e.message||e));}
+  }
+ })().catch(e=>console.warn('Live analysis checks failed',String(e.message||e)));
+
 });
 module.exports={server,handler,validDate};
