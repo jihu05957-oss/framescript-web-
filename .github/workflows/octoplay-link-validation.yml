@@ -1,0 +1,22 @@
+name: OctoPlay link validation
+on:
+  pull_request:
+    branches: [octoplay-multivideo]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  browser-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install browser test dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/octoplay-test" playwright
+          node "$RUNNER_TEMP/octoplay-test/node_modules/playwright/cli.js" install --with-deps chromium
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Run local, mobile emulation and real-network playback checks
+        env:
+          NODE_PATH: ${{ runner.temp }}/octoplay-test/node_modules
+        run: node octoplay-tests/validate.cjs
