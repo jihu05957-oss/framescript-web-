@@ -25,24 +25,39 @@ async function deadline(promise,ms){
  finally{if(timer)clearTimeout(timer);}
 }
 function kst(d){const v=new Date(d);return Number.isFinite(v.getTime())?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(v):null;}
-function iso(d){const x=new Date(d);return Number.isFinite(x.getTime())?x.toISOString():null;}
+function iso(d){if(d==null||d==='')return null;const x=new Date(d);return Number.isFinite(x.getTime())?x.toISOString():null;}
 function shift(day,offset){const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10);}
+function scoreValue(v){
+ if(v&&typeof v==='object')v=v.value??v.displayValue??v.score;
+ if(v===null||v===undefined||String(v).trim()==='')return null;
+ const n=Number(v);return Number.isFinite(n)&&n>=0?n:null;
+}
+function eventState(e,c){
+ const t=[e.status?.type,c.status?.type,e.status,c.status].filter(v=>v&&typeof v==='object');
+ const cancelled=t.some(v=>/postpon|cancel|abandon|suspend|forfeit/i.test([v.name,v.description,v.detail,v.shortDetail].join(' ')));
+ if(cancelled)return 'cancelled';
+ if(t.some(v=>v.completed===true||v.state==='post'||/^(STATUS_)?FINAL(?:_|$)|^full.time$|^final$/i.test(String(v.name||v.description||''))))return 'final';
+ if(t.some(v=>v.state==='in'))return 'live';
+ return 'scheduled';
+}
 function normalizeESPN(e,l){
  const c=e.competitions?.[0]||{},teams=c.competitors||[];
  const x=teams.find(t=>t.homeAway==='home'),y=teams.find(t=>t.homeAway==='away');
  if(!x||!y)return null;
- const team=t=>({id:String(t.team?.id||''),name:t.team?.displayName||t.team?.name||'미확인',short:t.team?.shortDisplayName||t.team?.abbreviation||'',logo:t.team?.logo||t.team?.logos?.[0]?.href||null,score:t.score==null?null:Number(t.score),record:t.records?.[0]?.summary||null,rank:t.curatedRank?.current||null});
+ const date=iso(e.date||c.date),status=eventState(e,c);
+ const team=t=>({id:String(t.team?.id||t.id||''),name:t.team?.displayName||t.team?.name||'미확인',short:t.team?.shortDisplayName||t.team?.abbreviation||'',logo:t.team?.logo||t.team?.logos?.[0]?.href||null,score:status==='final'||status==='live'?scoreValue(t.score):null,record:t.records?.[0]?.summary||null,rank:t.curatedRank?.current||null});
+ if(!date||!e.id||!String(x.team?.id||x.id||'')||!String(y.team?.id||y.id||''))return null;
+ const type=c.status?.type||e.status?.type||{};
  return {id:'espn:'+l.id+':'+e.id,source:'ESPN 공개 데이터',sourceType:'espn',externalId:String(e.id),league:l.id,leagueName:l.name,sport:l.sport,
- date:iso(e.date||c.date),status:e.status?.type?.state==='post'?'final':e.status?.type?.state==='in'?'live':'scheduled',
- statusText:e.status?.type?.shortDetail||e.status?.type?.description||'',home:team(x),away:team(y),venue:c.venue?.fullName||null,detail:null,odds:null};
+ date,status,statusText:type.shortDetail||type.description||'',home:team(x),away:team(y),venue:c.venue?.fullName||null,detail:null,odds:null};
 }
 function normalizeTSDB(e,l){
  if(!e.idEvent||!e.strHomeTeam||!e.strAwayTeam)return null;
  const day=e.dateEvent,tm=e.strTime,ts=iso(e.strTimestamp||((day&&tm&&/^\d\d:\d\d/.test(tm))?day+'T'+tm.slice(0,8)+'Z':day?day+'T12:00:00Z':null));
  const v=x=>(x===null||x===undefined||x==='')?null:Number(x),hs=v(e.intHomeScore),as=v(e.intAwayScore);
- const done=Number.isFinite(hs)&&Number.isFinite(as),live=!done&&/live|progress|half|quarter|inning/i.test(e.strStatus||'');
+ const st=String(e.strStatus||''),live=/live|progress|half|quarter|inning/i.test(st),cancelled=/postpon|cancel|abandon|suspend/i.test(st),scheduled=/not started|scheduled|tbd|NS/i.test(st),done=!live&&!cancelled&&!scheduled&&Number.isFinite(hs)&&Number.isFinite(as);
  return {id:'tsdb:'+l.id+':'+e.idEvent,source:'TheSportsDB 무료 API',sourceType:'tsdb',externalId:String(e.idEvent),league:l.id,leagueName:l.name,sport:l.sport,date:ts,
- status:done?'final':live?'live':'scheduled',statusText:e.strStatus||'',home:{id:String(e.idHomeTeam||e.strHomeTeam),name:e.strHomeTeam,short:e.strHomeTeam,logo:e.strHomeTeamBadge||null,score:Number.isFinite(hs)?hs:null,record:null},
+ status:cancelled?'cancelled':done?'final':live?'live':'scheduled',statusText:e.strStatus||'',home:{id:String(e.idHomeTeam||e.strHomeTeam),name:e.strHomeTeam,short:e.strHomeTeam,logo:e.strHomeTeamBadge||null,score:Number.isFinite(hs)?hs:null,record:null},
  away:{id:String(e.idAwayTeam||e.strAwayTeam),name:e.strAwayTeam,short:e.strAwayTeam,logo:e.strAwayTeamBadge||null,score:Number.isFinite(as)?as:null,record:null},
  venue:e.strVenue||null,detail:null,odds:null};
 }
@@ -130,7 +145,7 @@ async function espnRecent(g,l){
  const ids=[g.home.id,g.away.id].filter(Boolean),year=Number((g.date||'').slice(0,4))||new Date().getFullYear(),out=[];
  const month=Number((g.date||'').slice(5,7))||1;
  const season=l.sport==='basketball'?month>=7?year+1:year:l.sport==='soccer'?month>=7?year+1:year:year;
- const seasons=[season,season-1];
+ const seasons=l.sport==='soccer'?[year,year-1]:[season,season-1];
  const urls=ids.flatMap(id=>seasons.map(y=>ESPN+'/'+espnPath(l.sport)+'/'+l.espn+'/teams/'+encodeURIComponent(id)+'/schedule?season='+y+'&limit=100'));
  const responses=await Promise.allSettled(urls.map(u=>getJson(u,1200000)));
  for(const r of responses)if(r.status==='fulfilled')for(const e of r.value.events||[]){const v=normalizeESPN(e,l);if(v)out.push(v);}
