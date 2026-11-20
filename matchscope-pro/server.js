@@ -100,9 +100,10 @@ if(require.main===module)server.listen(PORT,'0.0.0.0',()=>{
   const day=kst(new Date()),d=new Date(day+'T12:00:00Z');
   for(const league of LEAGUES.filter(l=>['nba','epl','kleague1','j1'].includes(l.id))){
    try{
-    const next=new Date(+d+3*86400000).toISOString().slice(0,10),root='https://site.api.espn.com/apis/site/v2/sports/'+league.sport+'/'+league.espn;
-    const response=await getJson(root+'/scoreboard?dates='+day.replace(/-/g,'')+'-'+next.replace(/-/g,'')+'&limit=100',240000);
-    const fixtures=(response.events||[]).map(e=>normalizeESPN(e,league)).filter(g=>g&&g.status==='scheduled'&&Date.parse(g.date)>Date.now());
+    const root='https://site.api.espn.com/apis/site/v2/sports/'+league.sport+'/'+league.espn;
+    const days=[-1,0,1,2].map(offset=>new Date(+d+offset*86400000).toISOString().slice(0,10));
+    const responses=await Promise.allSettled(days.map(date=>getJson(root+'/scoreboard?dates='+date.replace(/-/g,'')+'&limit=300',240000)));
+    const fixtures=responses.flatMap(r=>r.status==='fulfilled'?(r.value.events||[]).map(e=>normalizeESPN(e,league)):[]).filter(g=>g&&g.status==='scheduled'&&Date.parse(g.date)>Date.now());
     const game=fixtures[0];if(!game){console.info('Live analysis check',JSON.stringify({league:league.id,fixture:'none found'}));continue;}
     const facts=await detail(game),m=model(game,facts.history,{strength:facts.strength||null});
     console.info('Live analysis check',JSON.stringify({league:league.id,home:game.home.name,away:game.away.name,date:game.date,history:facts.history.length,finished:facts.history.filter(x=>x.status==='final'&&Number.isFinite(x.home.score)&&Number.isFinite(x.away.score)).length,homeRecords:m.home.count,awayRecords:m.away.count,available:m.available,injuries:facts.extra.injuries?.length||0,errors:facts.errors}));
