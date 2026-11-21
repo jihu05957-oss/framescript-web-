@@ -162,13 +162,13 @@ let cursor=0;setInterval(()=>{for(let i=0;i<5;i++){scan(native[cursor++%native.l
 </style><script>
 (function(){
 const oldLayout=layout,oldCount=changeCount;
-const mode=document.createElement('select');mode.id='mosaic-mode';mode.setAttribute('aria-label','모자이크 배치');for(const [v,t] of [['8','중앙 8 + 외곽 22'],['10','중앙 10 + 외곽 20'],['0','기본 격자']]){const o=document.createElement('option');o.value=v;o.textContent=t;mode.append(o)}$('count').closest('label').after(mode);
-const label=document.createElement('span');label.style.fontSize='11px';label.textContent='중앙 영상부터 추가';mode.after(label);
-function cells(n){const w=n===8?7:6,h=6,c=n===8?4:5;const a=[];const u=60;for(let y=0;y<2;y++)for(let x=0;x<c;x++)a.push([u+x*(w-2)*u/c,u+y*2*u,(w-2)*u/c,2*u]);for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(y===0||y===h-1||x===0||x===w-1)a.push([x*u,y*u,u,u]);return {w,h,a}}
-function mosaic(){const n=Number(mode.value);stage.classList.toggle('mosaic',!!n);const active=!!n&&!stage.classList.contains('solo');if(!active){for(const s of slots)s.tile.style.gridArea='';return}const {w,h,a}=cells(n);const u=Math.min(stage.clientWidth/w,stage.clientHeight/h)/60;stage.style.setProperty('--mx',w*60);stage.style.setProperty('--my',h*60);stage.style.setProperty('--unit',u+'px');slots.forEach((s,i)=>{const [x,y,cw,ch]=a[i];s.tile.style.gridArea=(y+1)+' / '+(x+1)+' / span '+ch+' / span '+cw;const e=s.tile.querySelector('.empty small');if(e)e.textContent=i<n?'중앙 세로 · 파일 선택':'외곽 정사각형 · 파일 선택'})}
+const mode=document.createElement('select');mode.id='mosaic-mode';mode.setAttribute('aria-label','모자이크 배치');for(const [v,t] of [['1','중앙 대형 1 + 외곽 22'],['10','중앙 10 + 외곽 20'],['0','기본 격자']]){const o=document.createElement('option');o.value=v;o.textContent=t;mode.append(o)}$('count').closest('label').after(mode);
+const label=document.createElement('span');label.style.fontSize='11px';label.textContent='1번: 중앙 대형 화면 · 2~23번: 외곽 정사각형';mode.after(label);
+function cells(n){const w=n===1?7:6,h=6,c=n===1?0:5;const a=[];const u=60;if(n===1){a.push([u,u,(w-2)*u,(h-2)*u])}else{for(let y=0;y<2;y++)for(let x=0;x<c;x++)a.push([u+x*(w-2)*u/c,u+y*2*u,(w-2)*u/c,2*u])}for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(y===0||y===h-1||x===0||x===w-1)a.push([x*u,y*u,u,u]);return {w,h,a}}
+function mosaic(){const n=Number(mode.value);stage.classList.toggle('mosaic',!!n);const active=!!n&&!stage.classList.contains('solo');if(!active){for(const s of slots)s.tile.style.gridArea='';return}const {w,h,a}=cells(n);const u=Math.min(stage.clientWidth/w,stage.clientHeight/h)/60;stage.style.setProperty('--mx',w*60);stage.style.setProperty('--my',h*60);stage.style.setProperty('--unit',u+'px');slots.forEach((s,i)=>{if(!a[i]){s.tile.style.gridArea='';return}const [x,y,cw,ch]=a[i];s.tile.style.gridArea=(y+1)+' / '+(x+1)+' / span '+ch+' / span '+cw;const e=s.tile.querySelector('.empty small');if(e)e.textContent=i<n?(n===1?'중앙 대형 영상 · 파일 선택':'중앙 세로 · 파일 선택'):'외곽 정사각형 · 파일 선택'})}
 layout=function(){oldLayout();mosaic()};
-changeCount=function(n){return oldCount(Number(mode.value)?30:n)};
-mode.onchange=()=>{$('count').disabled=!!Number(mode.value);changeCount(Number(mode.value)?30:count);layout()};
+changeCount=function(n){return oldCount(mode.value==='1'?23:mode.value==='10'?30:n)};
+mode.onchange=()=>{$('count').disabled=!!Number(mode.value);label.textContent=mode.value==='1'?'1번: 중앙 대형 화면 · 2~23번: 외곽 정사각형':mode.value==='10'?'1~10번: 중앙 · 11~30번: 외곽':'기본 격자';changeCount(mode.value==='1'?23:mode.value==='10'?30:count);layout()};
 new ResizeObserver(mosaic).observe(stage);document.addEventListener('fullscreenchange',mosaic);window.addEventListener('resize',mosaic);
 mode.onchange();
 })();
